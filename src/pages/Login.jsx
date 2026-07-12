@@ -1,15 +1,19 @@
 import { useState } from 'react'
 import axios from 'axios'
 import { Link, useNavigate } from 'react-router-dom'
+import { LogIn, Mail, Lock, Building2 } from 'lucide-react'
+import LoadingSkeleton from '../components/LoadingSkeleton'
 
-export default function Login({ onLogin }) {
+export default function Login({ onLogin, darkMode }) {
   const [form, setForm] = useState({ email: '', password: '' })
   const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
   const navigate = useNavigate()
 
   const submit = async (e) => {
     e.preventDefault()
     setError('')
+    setLoading(true)
     try {
       const { data } = await axios.post('/auth/login', form)
       localStorage.setItem('token', data.token)
@@ -17,32 +21,105 @@ export default function Login({ onLogin }) {
       navigate('/dashboard')
     } catch (err) {
       setError(err.response?.data?.error || 'Login failed')
+    } finally {
+      setLoading(false)
     }
   }
 
   return (
-    <div className="container py-5">
-      <div className="row justify-content-center">
-        <div className="col-md-5">
-          <div className="card shadow-sm">
-            <div className="card-body p-4">
-              <h3 className="mb-3">Welcome to AssetFlow</h3>
-              <p className="text-muted">Enterprise asset and resource management</p>
-              <form onSubmit={submit}>
-                <div className="mb-3">
-                  <label className="form-label">Email</label>
-                  <input className="form-control" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} />
+    <div className={`min-vh-100 d-flex align-items-center justify-content-center ${darkMode ? 'bg-dark' : 'bg-light'}`}>
+      <div className="container">
+        <div className="row justify-content-center">
+          <div className="col-md-5 col-lg-4">
+            <div className={`card shadow-lg border-0 ${darkMode ? 'bg-secondary text-white' : ''}`}>
+              <div className="card-body p-4 p-md-5">
+                <div className="text-center mb-4">
+                  <div className="d-inline-flex align-items-center justify-content-center rounded-circle bg-primary text-white mb-3" style={{ width: '60px', height: '60px' }}>
+                    <Building2 size={32} />
+                  </div>
+                  <h3 className="fw-bold mb-2">Welcome to AssetFlow</h3>
+                  <p className={`text-muted ${darkMode ? 'text-light' : ''}`}>Enterprise asset and resource management</p>
                 </div>
-                <div className="mb-3">
-                  <label className="form-label">Password</label>
-                  <input type="password" className="form-control" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} />
+
+                <form onSubmit={submit}>
+                  <div className="mb-3">
+                    <div className="form-floating">
+                      <input
+                        type="email"
+                        className={`form-control ${darkMode ? 'bg-dark text-white border-secondary' : ''}`}
+                        id="email"
+                        placeholder="name@example.com"
+                        value={form.email}
+                        onChange={e => setForm({ ...form, email: e.target.value })}
+                        required
+                        disabled={loading}
+                      />
+                      <label htmlFor="email" className={darkMode ? 'text-light' : ''}>
+                        <Mail size={16} className="me-2" />
+                        Email Address
+                      </label>
+                    </div>
+                  </div>
+
+                  <div className="mb-4">
+                    <div className="form-floating">
+                      <input
+                        type="password"
+                        className={`form-control ${darkMode ? 'bg-dark text-white border-secondary' : ''}`}
+                        id="password"
+                        placeholder="Password"
+                        value={form.password}
+                        onChange={e => setForm({ ...form, password: e.target.value })}
+                        required
+                        disabled={loading}
+                      />
+                      <label htmlFor="password" className={darkMode ? 'text-light' : ''}>
+                        <Lock size={16} className="me-2" />
+                        Password
+                      </label>
+                    </div>
+                  </div>
+
+                  {error && (
+                    <div className="alert alert-danger py-2 mb-3" role="alert">
+                      {error}
+                    </div>
+                  )}
+
+                  <button 
+                    type="submit" 
+                    className="btn btn-primary w-100 py-2 fw-semibold"
+                    disabled={loading}
+                  >
+                    {loading ? (
+                      <>
+                        <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                        Signing in...
+                      </>
+                    ) : (
+                      <>
+                        <LogIn size={18} className="me-2" />
+                        Sign In
+                      </>
+                    )}
+                  </button>
+                </form>
+
+                <div className="mt-4 text-center">
+                  <p className={`mb-0 ${darkMode ? 'text-light' : 'text-muted'}`}>
+                    Don't have an account?{' '}
+                    <Link to="/register" className="text-primary text-decoration-none fw-semibold">
+                      Create account
+                    </Link>
+                  </p>
                 </div>
-                {error ? <div className="alert alert-danger py-2">{error}</div> : null}
-                <button className="btn btn-primary w-100">Login</button>
-              </form>
-              <div className="mt-3 text-center">
-                <Link to="/register">Create account</Link>
               </div>
+            </div>
+
+            <div className="text-center mt-4">
+              <p className={`small mb-0 ${darkMode ? 'text-light' : 'text-muted'}`}>
+                © 2026 AssetFlow. All rights reserved.
+              </p>
             </div>
           </div>
         </div>

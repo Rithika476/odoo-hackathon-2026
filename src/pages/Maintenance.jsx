@@ -1,7 +1,11 @@
 import { useEffect, useState } from 'react'
 import axios from 'axios'
+import { Wrench, Plus, Search, X, Clock } from 'lucide-react'
+import Toast from '../components/Toast'
+import ConfirmationDialog from '../components/ConfirmationDialog'
+import LoadingSkeleton from '../components/LoadingSkeleton'
 
-export default function Maintenance() {
+export default function Maintenance({ darkMode }) {
   const [items, setItems] = useState([])
   const [assets, setAssets] = useState([])
   const [technicians, setTechnicians] = useState([])
@@ -9,6 +13,8 @@ export default function Maintenance() {
   const [form, setForm] = useState({ asset_id: '', issue_description: '', priority: 'medium', photo_url: '' })
   const [error, setError] = useState('')
   const [tab, setTab] = useState('list') 
+  const [loading, setLoading] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
   
   // Search & Filter
   const [searchTerm, setSearchTerm] = useState('')
@@ -20,8 +26,14 @@ export default function Maintenance() {
   const [selectedItem, setSelectedItem] = useState(null)
   const [assignForm, setAssignForm] = useState({ technician_id: '' })
   const [assetHistory, setAssetHistory] = useState([])
+  
+  // Toast
+  const [showToast, setShowToast] = useState(false)
+  const [toastMessage, setToastMessage] = useState('')
+  const [toastType, setToastType] = useState('success')
 
   const load = async () => {
+    setLoading(true)
     try {
       const token = localStorage.getItem('token')
       const [maintenanceRes, assetRes, techRes] = await Promise.all([
@@ -33,7 +45,9 @@ export default function Maintenance() {
       setAssets(assetRes.data)
       setTechnicians(techRes.data)
     } catch (err) {
-      console.error(err)
+      showToastMessage('Failed to load maintenance data', 'danger')
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -42,14 +56,18 @@ export default function Maintenance() {
   const submit = async (e) => {
     e.preventDefault()
     setError('')
+    setSubmitting(true)
     try {
       const token = localStorage.getItem('token')
       await axios.post('/maintenance', form, { headers: { Authorization: `Bearer ${token}` } })
       setForm({ asset_id: '', issue_description: '', priority: 'medium', photo_url: '' })
+      showToastMessage('Maintenance request submitted successfully', 'success')
       load()
       setTab('list')
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to submit request.')
+    } finally {
+      setSubmitting(false)
     }
   }
 
@@ -58,10 +76,10 @@ export default function Maintenance() {
       const token = localStorage.getItem('token')
       await axios.patch(`/maintenance/${id}`, { status, ...payload }, { headers: { Authorization: `Bearer ${token}` } })
       await load()
-      // Close the modal upon updating, so the user can see it updated in the list or reopen it with fresh data
       setSelectedItem(null)
+      showToastMessage('Status updated successfully', 'success')
     } catch (err) {
-      alert(err.response?.data?.error || 'Failed to update status.')
+      showToastMessage(err.response?.data?.error || 'Failed to update status.', 'danger')
     }
   }
 
@@ -75,6 +93,12 @@ export default function Maintenance() {
     } catch (err) {
       setAssetHistory([])
     }
+  }
+
+  const showToastMessage = (message, type) => {
+    setToastMessage(message)
+    setToastType(type)
+    setShowToast(true)
   }
 
   const getAssetName = (assetId) => {
@@ -122,36 +146,51 @@ export default function Maintenance() {
 
   return (
     <div>
-      <h2 className="mb-4">Maintenance Management</h2>
+      {showToast && (
+        <Toast 
+          message={toastMessage} 
+          type={toastType} 
+          onClose={() => setShowToast(false)} 
+        />
+      )}
 
-      <ul className="nav nav-tabs mb-4">
+      <h3 className="fw-bold mb-4 d-flex align-items-center gap-2">
+        <Wrench size={28} />
+        Maintenance Management
+      </h3>
+
+      <ul className={`nav nav-tabs mb-4 ${darkMode ? 'border-secondary' : ''}`}>
         <li className="nav-item">
-          <button className={`nav-link ${tab === 'list' ? 'active' : ''}`} onClick={() => setTab('list')}>Requests List</button>
+          <button className={`nav-link ${tab === 'list' ? 'active' : ''} ${darkMode ? 'text-white' : ''}`} onClick={() => setTab('list')}>Requests List</button>
         </li>
         <li className="nav-item">
-          <button className={`nav-link ${tab === 'submit' ? 'active' : ''}`} onClick={() => setTab('submit')}>Raise Request</button>
+          <button className={`nav-link ${tab === 'submit' ? 'active' : ''} ${darkMode ? 'text-white' : ''}`} onClick={() => setTab('submit')}>Raise Request</button>
         </li>
       </ul>
 
       {tab === 'submit' && (
-        <div className="card p-4 shadow-sm border-0 mx-auto" style={{ maxWidth: '600px' }}>
+        <div className={`card p-4 shadow-sm border-0 mx-auto ${darkMode ? 'bg-secondary text-white' : ''}`} style={{ maxWidth: '600px' }}>
+          <h5 className="card-title mb-3 d-flex align-items-center gap-2">
+            <Plus size={20} />
+            Raise Maintenance Request
+          </h5>
           {error && <div className="alert alert-danger">{error}</div>}
           <form onSubmit={submit}>
             <div className="mb-3">
               <label className="form-label">Select Asset</label>
-              <select className="form-select" value={form.asset_id} onChange={e => setForm({ ...form, asset_id: e.target.value })} required>
+              <select className={`form-select ${darkMode ? 'bg-dark text-white border-secondary' : ''}`} value={form.asset_id} onChange={e => setForm({ ...form, asset_id: e.target.value })} required>
                 <option value="">-- Choose Asset --</option>
                 {assets.map(asset => <option key={asset.id} value={asset.id}>{asset.name}</option>)}
               </select>
             </div>
             <div className="mb-3">
               <label className="form-label">Issue Description</label>
-              <textarea className="form-control" rows="3" value={form.issue_description} onChange={e => setForm({ ...form, issue_description: e.target.value })} required />
+              <textarea className={`form-control ${darkMode ? 'bg-dark text-white border-secondary' : ''}`} rows="3" value={form.issue_description} onChange={e => setForm({ ...form, issue_description: e.target.value })} required />
             </div>
             <div className="row mb-3">
               <div className="col-md-6">
                 <label className="form-label">Priority</label>
-                <select className="form-select" value={form.priority} onChange={e => setForm({ ...form, priority: e.target.value })}>
+                <select className={`form-select ${darkMode ? 'bg-dark text-white border-secondary' : ''}`} value={form.priority} onChange={e => setForm({ ...form, priority: e.target.value })}>
                   <option value="low">Low</option>
                   <option value="medium">Medium</option>
                   <option value="high">High</option>
@@ -160,10 +199,14 @@ export default function Maintenance() {
               </div>
               <div className="col-md-6">
                 <label className="form-label">Photo URL (Optional)</label>
-                <input type="text" className="form-control" placeholder="https://..." value={form.photo_url} onChange={e => setForm({ ...form, photo_url: e.target.value })} />
+                <input type="text" className={`form-control ${darkMode ? 'bg-dark text-white border-secondary' : ''}`} placeholder="https://..." value={form.photo_url} onChange={e => setForm({ ...form, photo_url: e.target.value })} />
               </div>
             </div>
-            <button className="btn btn-primary w-100 mt-2">Submit Request</button>
+            <button className="btn btn-primary w-100 mt-2" disabled={submitting}>
+              {submitting ? (
+                <span className="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+              ) : 'Submit Request'}
+            </button>
           </form>
         </div>
       )}
@@ -172,19 +215,21 @@ export default function Maintenance() {
         <>
           <div className="d-flex justify-content-between align-items-center mb-3">
             <div className="d-flex gap-2">
-              <input 
-                type="text" 
-                className="form-control" 
-                placeholder="Search issues or assets..." 
-                value={searchTerm} 
-                onChange={e => { setSearchTerm(e.target.value); setCurrentPage(1); }} 
-                style={{ width: '250px' }} 
-              />
+              <div className="position-relative" style={{ maxWidth: '300px' }}>
+                <Search size={18} className="position-absolute top-50 start-0 translate-middle-y ms-3 text-muted" />
+                <input 
+                  type="text" 
+                  className={`form-control ps-5 ${darkMode ? 'bg-dark text-white border-secondary' : ''}`}
+                  placeholder="Search issues or assets..." 
+                  value={searchTerm} 
+                  onChange={e => { setSearchTerm(e.target.value); setCurrentPage(1); }} 
+                />
+              </div>
               <select 
-                className="form-select" 
+                className={`form-select ${darkMode ? 'bg-dark text-white border-secondary' : ''}`}
+                style={{ width: '150px' }}
                 value={statusFilter} 
                 onChange={e => { setStatusFilter(e.target.value); setCurrentPage(1); }}
-                style={{ width: '150px' }}
               >
                 <option value="all">All Statuses</option>
                 <option value="pending">Pending</option>
@@ -196,40 +241,47 @@ export default function Maintenance() {
             </div>
           </div>
 
-          <div className="card shadow-sm border-0 mb-4">
-            <div className="card-body p-0">
-              <table className="table table-hover mb-0 align-middle">
-                <thead className="table-light">
-                  <tr>
-                    <th>Asset</th>
-                    <th>Issue</th>
-                    <th>Priority</th>
-                    <th>Status</th>
-                    <th>Date Requested</th>
-                    <th>Action</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {paginated.length > 0 ? paginated.map(item => (
-                    <tr key={item.id}>
-                      <td>{getAssetName(item.asset_id)}</td>
-                      <td style={{ maxWidth: '200px' }} className="text-truncate" title={item.issue_description}>{item.issue_description}</td>
-                      <td>{getPriorityBadge(item.priority)}</td>
-                      <td>{getStatusBadge(item.status)}</td>
-                      <td>{new Date(item.created_at).toLocaleDateString()}</td>
-                      <td>
-                        <button className="btn btn-sm btn-outline-secondary" onClick={() => openDetails(item)}>Details & History</button>
-                      </td>
-                    </tr>
-                  )) : (
+          {loading ? (
+            <LoadingSkeleton type="table" rows={5} />
+          ) : (
+            <div className={`card shadow-sm border-0 mb-4 ${darkMode ? 'bg-secondary text-white' : ''}`}>
+              <div className="card-body p-0">
+                <table className="table table-hover mb-0 align-middle">
+                  <thead className={darkMode ? 'table-dark' : 'table-light'}>
                     <tr>
-                      <td colSpan="6" className="text-center text-muted py-4">No maintenance requests found.</td>
+                      <th>Asset</th>
+                      <th>Issue</th>
+                      <th>Priority</th>
+                      <th>Status</th>
+                      <th>Date Requested</th>
+                      <th>Action</th>
                     </tr>
-                  )}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {paginated.length > 0 ? paginated.map(item => (
+                      <tr key={item.id}>
+                        <td className="fw-semibold">{getAssetName(item.asset_id)}</td>
+                        <td style={{ maxWidth: '200px' }} className="text-truncate" title={item.issue_description}>{item.issue_description}</td>
+                        <td>{getPriorityBadge(item.priority)}</td>
+                        <td>{getStatusBadge(item.status)}</td>
+                        <td className="text-muted small">{new Date(item.created_at).toLocaleDateString()}</td>
+                        <td>
+                          <button className="btn btn-sm btn-outline-primary" onClick={() => openDetails(item)}>Details & History</button>
+                        </td>
+                      </tr>
+                    )) : (
+                      <tr>
+                        <td colSpan="6" className="text-center text-muted py-4">
+                          <Wrench size={48} className="mb-2 text-muted" />
+                          <p className="mb-0">No maintenance requests found.</p>
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
-          </div>
+          )}
 
           {totalPages > 1 && (
             <div className="d-flex justify-content-center">
@@ -252,10 +304,10 @@ export default function Maintenance() {
       )}
 
       {selectedItem && (
-        <div className="modal show d-block" style={{ backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 1050 }}>
+        <div className={`modal show d-block ${darkMode ? 'text-white' : ''}`} style={{ backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 1050 }}>
           <div className="modal-dialog modal-lg">
-            <div className="modal-content">
-              <div className="modal-header bg-light">
+            <div className={`modal-content ${darkMode ? 'bg-secondary text-white border-secondary' : ''}`}>
+              <div className={`modal-header ${darkMode ? 'border-secondary' : 'bg-light'}`}>
                 <h5 className="modal-title">Maintenance Details</h5>
                 <button type="button" className="btn-close" onClick={() => setSelectedItem(null)}></button>
               </div>
@@ -275,9 +327,9 @@ export default function Maintenance() {
                   </div>
                 </div>
 
-                <div className="card mb-4 bg-light border-0">
+                <div className={`card mb-4 ${darkMode ? 'bg-dark text-white border-secondary' : 'bg-light border-0'}`}>
                   <div className="card-body">
-                    <h6>Request Timeline</h6>
+                    <h6 className="d-flex align-items-center gap-2"><Clock size={18} /> Request Timeline</h6>
                     <ul className="list-unstyled mb-0" style={{ fontSize: '0.9rem' }}>
                       <li><strong>Requested:</strong> {formatDate(selectedItem.created_at)}</li>
                       {selectedItem.approved_at && <li><strong>Approved:</strong> {formatDate(selectedItem.approved_at)}</li>}
@@ -315,7 +367,7 @@ export default function Maintenance() {
                   )}
                 </div>
 
-                <hr/>
+                <hr className={darkMode ? 'border-secondary' : ''}/>
                 <h6>Asset History Log</h6>
                 <div style={{ maxHeight: '200px', overflowY: 'auto' }}>
                   {assetHistory.length > 0 ? (

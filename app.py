@@ -30,7 +30,7 @@ def resolve_database_uri():
 
 app.config['SQLALCHEMY_DATABASE_URI'] = resolve_database_uri()
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY', 'assetflow-secret-key')
+app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY', 'assetflow-secret-key-extended-for-security')
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(hours=8)
 
 CORS(app)
@@ -400,7 +400,7 @@ def login():
     user = User.query.filter_by(email=email).first()
     if not user or not verify_password(password, user.password_hash):
         return jsonify({'error': 'Invalid credentials'}), 401
-    token = create_access_token(identity=user.id)
+    token = create_access_token(identity=str(user.id))
     role = user.role.name if user.role else 'Employee'
     return jsonify({'token': token, 'user': {'id': user.id, 'full_name': user.full_name, 'email': user.email, 'role': role}})
 
@@ -417,6 +417,8 @@ def current_user():
 @app.get('/api/dashboard')
 @jwt_required()
 def dashboard():
+    today = datetime.utcnow().date()
+    
     counts = {
         'assets': Asset.query.count(),
         'departments': Department.query.count(),
@@ -424,14 +426,62 @@ def dashboard():
         'maintenance': MaintenanceRequest.query.count(),
         'available_assets': Asset.query.filter_by(status='available').count(),
         'allocated_assets': Asset.query.filter_by(status='assigned').count(),
+        'under_maintenance': Asset.query.filter_by(status='maintenance').count(),
         'pending_transfers': TransferRequest.query.filter_by(status='pending').count(),
+        'pending_maintenance': MaintenanceRequest.query.filter_by(status='pending').count(),
+        'bookings_today': Booking.query.filter(func.date(Booking.start_time) == today).count(),
         'audit_cycles': AuditCycle.query.count(),
         'bookings': Booking.query.count(),
     }
+    
+    # Asset Distribution by Category
+    category_distribution = db.session.query(
+        AssetCategory.name,
+        func.count(Asset.id).label('count')
+    ).join(Asset, AssetCategory.id == Asset.category_id).group_by(AssetCategory.name).all()
+    
+    # Asset Distribution by Department
+    department_distribution = db.session.query(
+        Department.name,
+        func.count(Asset.id).label('count')
+    ).join(Asset, Department.id == Asset.department_id).group_by(Department.name).all()
+    
+    # Monthly Asset Growth (last 6 months)
+    monthly_growth = []
+    for i in range(6):
+        month_start = (datetime.utcnow().replace(day=1) - timedelta(days=30*i)).replace(day=1)
+        month_end = (month_start + timedelta(days=32)).replace(day=1) - timedelta(days=1)
+        count = Asset.query.filter(Asset.created_at >= month_start, Asset.created_at <= month_end).count()
+        monthly_growth.append({
+            'month': month_start.strftime('%b %Y'),
+            'count': count
+        })
+    monthly_growth.reverse()
+    
+    # Maintenance Statistics by Status
+    maintenance_stats = db.session.query(
+        MaintenanceRequest.status,
+        func.count(MaintenanceRequest.id).label('count')
+    ).group_by(MaintenanceRequest.status).all()
+    
+    # Booking Statistics by Status
+    booking_stats = db.session.query(
+        Booking.status,
+        func.count(Booking.id).label('count')
+    ).group_by(Booking.status).all()
+    
     recent = ActivityLog.query.order_by(ActivityLog.created_at.desc()).limit(8).all()
+    
     return jsonify({
         'counts': counts,
         'recent_activity': [{'action': item.action, 'details': item.details, 'created_at': item.created_at.isoformat()} for item in recent],
+        'charts': {
+            'category_distribution': [{'name': item[0], 'count': item[1]} for item in category_distribution],
+            'department_distribution': [{'name': item[0], 'count': item[1]} for item in department_distribution],
+            'monthly_growth': monthly_growth,
+            'maintenance_stats': [{'status': item[0], 'count': item[1]} for item in maintenance_stats],
+            'booking_stats': [{'status': item[0], 'count': item[1]} for item in booking_stats],
+        }
     })
 
 
