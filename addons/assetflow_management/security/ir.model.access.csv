@@ -1,0 +1,4 @@
+id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
+access_assetflow_asset,access.assetflow.asset,model_assetflow_asset,base.group_user,1,1,1,1
+access_assetflow_asset_category,access.assetflow.asset.category,model_assetflow_asset_category,base.group_user,1,1,1,1
+access_assetflow_asset_allocation,access.assetflow.asset.allocation,model_assetflow_asset_allocation,base.group_user,1,1,1,1

@@ -1,0 +1,45 @@
+<odoo>
+    <record id="view_assetflow_asset_tree" model="ir.ui.view">
+        <field name="name">assetflow.asset.tree</field>
+        <field name="model">assetflow.asset</field>
+        <field name="arch" type="xml">
+            <tree>
+                <field name="name"/>
+                <field name="asset_tag"/>
+                <field name="category_id"/>
+                <field name="state"/>
+                <field name="assigned_to"/>
+            </tree>
+        </field>
+    </record>
+
+    <record id="view_assetflow_asset_form" model="ir.ui.view">
+        <field name="name">assetflow.asset.form</field>
+        <field name="model">assetflow.asset</field>
+        <field name="arch" type="xml">
+            <form string="Asset">
+                <sheet>
+                    <group>
+                        <field name="name"/>
+                        <field name="asset_tag"/>
+                        <field name="serial_number"/>
+                        <field name="category_id"/>
+                        <field name="state"/>
+                        <field name="assigned_to"/>
+                        <field name="purchase_date"/>
+                        <field name="warranty_end"/>
+                        <field name="value"/>
+                        <field name="location"/>
+                        <field name="description"/>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="action_assetflow_assets" model="ir.actions.act_window">
+        <field name="name">Assets</field>
+        <field name="res_model">assetflow.asset</field>
+        <field name="view_mode">tree,form</field>
+    </record>
+</odoo>

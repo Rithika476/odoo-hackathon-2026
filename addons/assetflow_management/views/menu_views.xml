@@ -1,0 +1,5 @@
+<odoo>
+    <menuitem id="menu_assetflow_root" name="AssetFlow" sequence="10"/>
+    <menuitem id="menu_assetflow_assets" name="Assets" parent="menu_assetflow_root" action="action_assetflow_assets" sequence="10"/>
+    <menuitem id="menu_assetflow_allocations" name="Allocations" parent="menu_assetflow_root" action="action_assetflow_allocations" sequence="20"/>
+</odoo>
