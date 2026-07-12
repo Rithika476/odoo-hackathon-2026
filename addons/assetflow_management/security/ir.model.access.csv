@@ -2,3 +2,9 @@ id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
 access_assetflow_asset,access.assetflow.asset,model_assetflow_asset,base.group_user,1,1,1,1
 access_assetflow_asset_category,access.assetflow.asset.category,model_assetflow_asset_category,base.group_user,1,1,1,1
 access_assetflow_asset_allocation,access.assetflow.asset.allocation,model_assetflow_asset_allocation,base.group_user,1,1,1,1
+access_assetflow_department,access.assetflow.department,model_assetflow_department,base.group_user,1,1,1,1
+access_assetflow_employee,access.assetflow.employee,model_assetflow_employee,base.group_user,1,1,1,1
+access_assetflow_maintenance_request,access.assetflow.maintenance.request,model_assetflow_maintenance_request,base.group_user,1,1,1,1
+access_assetflow_resource_booking,access.assetflow.resource.booking,model_assetflow_resource_booking,base.group_user,1,1,1,1
+access_assetflow_asset_audit,access.assetflow.asset.audit,model_assetflow_asset_audit,base.group_user,1,1,1,1
+access_assetflow_asset_request,access.assetflow.asset.request,model_assetflow_asset_request,base.group_user,1,1,1,1

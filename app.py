@@ -1,6 +1,7 @@
 import os
 from datetime import datetime, timedelta
 from flask import Flask, jsonify, request
+from sqlalchemy import func, text
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 from flask_cors import CORS
@@ -19,10 +20,10 @@ def resolve_database_uri():
         return configured
     try:
         from sqlalchemy import create_engine
-        engine = create_engine('mysql+pymysql://root:root@localhost:3306/assetflow_db')
+        engine = create_engine('mysql+pymysql://root:@localhost:3306/assetflow_db')
         with engine.connect() as connection:
-            connection.execute(db.text('SELECT 1'))
-        return 'mysql+pymysql://root:root@localhost:3306/assetflow_db'
+            connection.execute(text('SELECT 1'))
+        return 'mysql+pymysql://root:@localhost:3306/assetflow_db'
     except Exception:
         return 'sqlite:///assetflow.db'
 
@@ -239,6 +240,42 @@ def verify_password(password: str, hashed: str) -> bool:
     return bcrypt.checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
 
 
+def validate_required_fields(data, required_fields):
+    missing = [field for field in required_fields if not data.get(field)]
+    if missing:
+        raise ValueError(f"Missing required fields: {', '.join(missing)}")
+
+
+def record_activity(user_id, action, details):
+    db.session.add(ActivityLog(user_id=user_id, action=action, details=details))
+    db.session.commit()
+
+
+def notify_user(user_id, title, message):
+    if not user_id:
+        return
+    db.session.add(Notification(user_id=user_id, title=title, message=message))
+    db.session.commit()
+
+
+def enqueue_overdue_return_notifications():
+    today = datetime.utcnow()
+    allocations = AssetAllocation.query.filter(
+        AssetAllocation.status == 'assigned',
+        AssetAllocation.expected_return_date.is_not(None),
+        AssetAllocation.expected_return_date < today,
+    ).all()
+    for allocation in allocations:
+        if allocation.assigned_to_user_id:
+            existing = Notification.query.filter_by(
+                user_id=allocation.assigned_to_user_id,
+                title='Return Overdue',
+                message=f'Asset {allocation.asset_id} is overdue for return.'
+            ).first()
+            if not existing:
+                notify_user(allocation.assigned_to_user_id, 'Return Overdue', f'Asset {allocation.asset_id} is overdue for return.')
+
+
 def seed_database():
     if Role.query.count() > 0:
         return
@@ -350,9 +387,17 @@ def dashboard():
         'departments': Department.query.count(),
         'employees': Employee.query.count(),
         'maintenance': MaintenanceRequest.query.count(),
+        'available_assets': Asset.query.filter_by(status='available').count(),
+        'allocated_assets': Asset.query.filter_by(status='assigned').count(),
+        'pending_transfers': TransferRequest.query.filter_by(status='pending').count(),
+        'audit_cycles': AuditCycle.query.count(),
+        'bookings': Booking.query.count(),
     }
-    recent = ActivityLog.query.order_by(ActivityLog.created_at.desc()).limit(5).all()
-    return jsonify({'counts': counts, 'recent_activity': [{'action': item.action, 'details': item.details, 'created_at': item.created_at.isoformat()} for item in recent]})
+    recent = ActivityLog.query.order_by(ActivityLog.created_at.desc()).limit(8).all()
+    return jsonify({
+        'counts': counts,
+        'recent_activity': [{'action': item.action, 'details': item.details, 'created_at': item.created_at.isoformat()} for item in recent],
+    })
 
 
 @app.get('/api/departments')
@@ -366,10 +411,57 @@ def departments():
 @jwt_required()
 def create_department():
     data = request.get_json() or {}
+    try:
+        validate_required_fields(data, ['name', 'code'])
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+    if Department.query.filter((Department.name == data['name']) | (Department.code == data['code'])).first():
+        return jsonify({'error': 'Department already exists'}), 400
     department = Department(name=data['name'], code=data['code'], description=data.get('description', ''))
     db.session.add(department)
     db.session.commit()
+    record_activity(get_jwt_identity(), 'Department Created', f"Created department {department.name}")
     return jsonify({'id': department.id, 'name': department.name, 'code': department.code})
+
+
+@app.patch('/api/departments/<int:department_id>')
+@jwt_required()
+def update_department(department_id):
+    department = Department.query.get_or_404(department_id)
+    data = request.get_json() or {}
+    if 'name' in data:
+        existing = Department.query.filter(Department.name == data['name'], Department.id != department_id).first()
+        if existing:
+            return jsonify({'error': 'Department name already exists'}), 400
+        department.name = data['name']
+    if 'code' in data:
+        existing = Department.query.filter(Department.code == data['code'], Department.id != department_id).first()
+        if existing:
+            return jsonify({'error': 'Department code already exists'}), 400
+        department.code = data['code']
+    if 'description' in data:
+        department.description = data['description']
+    if 'head_user_id' in data:
+        if data['head_user_id'] and not User.query.get(data['head_user_id']):
+            return jsonify({'error': 'User not found'}), 400
+        department.head_user_id = data['head_user_id']
+    db.session.commit()
+    record_activity(get_jwt_identity(), 'Department Updated', f"Updated department {department.name}")
+    return jsonify({'id': department.id, 'name': department.name, 'code': department.code})
+
+
+@app.delete('/api/departments/<int:department_id>')
+@jwt_required()
+def delete_department(department_id):
+    department = Department.query.get_or_404(department_id)
+    if Employee.query.filter_by(department_id=department_id).first():
+        return jsonify({'error': 'Cannot delete department with employees'}), 400
+    if Asset.query.filter_by(department_id=department_id).first():
+        return jsonify({'error': 'Cannot delete department with assets'}), 400
+    db.session.delete(department)
+    db.session.commit()
+    record_activity(get_jwt_identity(), 'Department Deleted', f"Deleted department {department.name}")
+    return jsonify({'ok': True})
 
 
 @app.get('/api/employees')
@@ -383,13 +475,69 @@ def employees():
 @jwt_required()
 def create_employee():
     data = request.get_json() or {}
+    try:
+        validate_required_fields(data, ['email', 'job_title'])
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+    if data.get('department_id') and not Department.query.get(data['department_id']):
+        return jsonify({'error': 'Department not found'}), 400
     user = User.query.filter_by(email=data['email']).first()
     if not user:
-        return jsonify({'error': 'User not found'}), 404
-    employee = Employee(user_id=user.id, department_id=data['department_id'], job_title=data.get('job_title', 'Employee'), phone=data.get('phone', ''), location=data.get('location', ''), status=data.get('status', 'active'))
+        user = User(
+            full_name=data.get('full_name', data['email']),
+            email=data['email'],
+            password_hash=hash_password(data.get('password', 'Welcome123!')),
+            role_id=Role.query.filter_by(name='Employee').first().id,
+            department_id=data.get('department_id'),
+        )
+        db.session.add(user)
+        db.session.commit()
+    employee = Employee(user_id=user.id, department_id=data.get('department_id'), job_title=data.get('job_title', 'Employee'), phone=data.get('phone', ''), location=data.get('location', ''), status=data.get('status', 'active'))
     db.session.add(employee)
     db.session.commit()
+    record_activity(get_jwt_identity(), 'Employee Registered', f"Registered {user.full_name}")
     return jsonify({'id': employee.id})
+
+
+@app.patch('/api/employees/<int:employee_id>')
+@jwt_required()
+def update_employee(employee_id):
+    employee = Employee.query.get_or_404(employee_id)
+    data = request.get_json() or {}
+    if 'department_id' in data:
+        if not Department.query.get(data['department_id']):
+            return jsonify({'error': 'Department not found'}), 400
+        employee.department_id = data['department_id']
+    if 'job_title' in data:
+        employee.job_title = data['job_title']
+    if 'phone' in data:
+        employee.phone = data['phone']
+    if 'location' in data:
+        employee.location = data['location']
+    if 'status' in data:
+        employee.status = data['status']
+    if 'is_department_head' in data:
+        employee.is_department_head = data['is_department_head']
+    if 'is_asset_manager' in data:
+        employee.is_asset_manager = data['is_asset_manager']
+    db.session.commit()
+    record_activity(get_jwt_identity(), 'Employee Updated', f"Updated employee {employee_id}")
+    return jsonify({'id': employee.id})
+
+
+@app.delete('/api/employees/<int:employee_id>')
+@jwt_required()
+def delete_employee(employee_id):
+    employee = Employee.query.get_or_404(employee_id)
+    if AssetAllocation.query.filter_by(assigned_to_user_id=employee.user_id).filter(AssetAllocation.status == 'assigned').first():
+        return jsonify({'error': 'Cannot delete employee with active asset allocations'}), 400
+    user = User.query.get(employee.user_id)
+    db.session.delete(employee)
+    if user:
+        user.is_active = False
+    db.session.commit()
+    record_activity(get_jwt_identity(), 'Employee Deleted', f"Deleted employee {employee_id}")
+    return jsonify({'ok': True})
 
 
 @app.get('/api/categories')
@@ -399,14 +547,58 @@ def categories():
     return jsonify([{'id': item.id, 'name': item.name, 'code': item.code, 'description': item.description} for item in data])
 
 
+@app.get('/api/users')
+@jwt_required()
+def users():
+    data = User.query.order_by(User.full_name.asc()).all()
+    return jsonify([{'id': item.id, 'full_name': item.full_name, 'email': item.email, 'role': item.role.name if item.role else ''} for item in data])
+
+
 @app.post('/api/categories')
 @jwt_required()
 def create_category():
     data = request.get_json() or {}
+    if AssetCategory.query.filter((AssetCategory.name == data['name']) | (AssetCategory.code == data['code'])).first():
+        return jsonify({'error': 'Category already exists'}), 400
     category = AssetCategory(name=data['name'], code=data['code'], description=data.get('description', ''))
     db.session.add(category)
     db.session.commit()
+    record_activity(get_jwt_identity(), 'Category Created', f"Created category {category.name}")
     return jsonify({'id': category.id, 'name': category.name})
+
+
+@app.patch('/api/categories/<int:category_id>')
+@jwt_required()
+def update_category(category_id):
+    category = AssetCategory.query.get_or_404(category_id)
+    data = request.get_json() or {}
+    if 'name' in data:
+        existing = AssetCategory.query.filter(AssetCategory.name == data['name'], AssetCategory.id != category_id).first()
+        if existing:
+            return jsonify({'error': 'Category name already exists'}), 400
+        category.name = data['name']
+    if 'code' in data:
+        existing = AssetCategory.query.filter(AssetCategory.code == data['code'], AssetCategory.id != category_id).first()
+        if existing:
+            return jsonify({'error': 'Category code already exists'}), 400
+        category.code = data['code']
+    if 'description' in data:
+        category.description = data['description']
+    db.session.commit()
+    record_activity(get_jwt_identity(), 'Category Updated', f"Updated category {category.name}")
+    return jsonify({'id': category.id, 'name': category.name})
+
+
+@app.delete('/api/categories/<int:category_id>')
+@jwt_required()
+def delete_category(category_id):
+    category = AssetCategory.query.get_or_404(category_id)
+    if Asset.query.filter_by(category_id=category_id).first():
+        return jsonify({'error': 'Cannot delete category with assets'}), 400
+    db.session.delete(category)
+    db.session.commit()
+    record_activity(get_jwt_identity(), 'Category Deleted', f"Deleted category {category.name}")
+    return jsonify({'ok': True})
 
 
 @app.get('/api/assets')
@@ -416,14 +608,111 @@ def assets():
     return jsonify([{'id': asset.id, 'name': asset.name, 'asset_tag': asset.asset_tag, 'status': asset.status, 'category': category.name, 'department': department.name} for asset, category, department in data])
 
 
+@app.get('/api/assets/<int:asset_id>')
+@jwt_required()
+def asset_detail(asset_id):
+    asset = Asset.query.get_or_404(asset_id)
+    category = AssetCategory.query.get(asset.category_id)
+    department = Department.query.get(asset.department_id)
+    assigned_user = User.query.get(asset.assigned_to_user_id) if asset.assigned_to_user_id else None
+    images = AssetImage.query.filter_by(asset_id=asset_id).all()
+    history = AssetHistory.query.filter_by(asset_id=asset_id).order_by(AssetHistory.created_at.desc()).limit(10).all()
+    
+    return jsonify({
+        'id': asset.id,
+        'name': asset.name,
+        'asset_tag': asset.asset_tag,
+        'serial_number': asset.serial_number,
+        'status': asset.status,
+        'category': {'id': category.id, 'name': category.name, 'code': category.code} if category else None,
+        'department': {'id': department.id, 'name': department.name, 'code': department.code} if department else None,
+        'assigned_to': {'id': assigned_user.id, 'full_name': assigned_user.full_name, 'email': assigned_user.email} if assigned_user else None,
+        'purchase_date': asset.purchase_date.isoformat() if asset.purchase_date else None,
+        'warranty_end': asset.warranty_end.isoformat() if asset.warranty_end else None,
+        'location': asset.location,
+        'value': float(asset.value) if asset.value else 0,
+        'description': asset.description,
+        'qr_code': asset.qr_code,
+        'created_at': asset.created_at.isoformat() if asset.created_at else None,
+        'images': [{'id': img.id, 'image_url': img.image_url, 'caption': img.caption} for img in images],
+        'history': [{'id': h.id, 'action': h.action, 'details': h.details, 'created_at': h.created_at.isoformat()} for h in history]
+    })
+
+
 @app.post('/api/assets')
 @jwt_required()
 def create_asset():
     data = request.get_json() or {}
-    asset = Asset(name=data['name'], asset_tag=data['asset_tag'], serial_number=data['serial_number'], category_id=data['category_id'], department_id=data['department_id'], status=data.get('status', 'available'), value=data.get('value', 0.0), location=data.get('location', 'Main Office'))
+    try:
+        validate_required_fields(data, ['name', 'asset_tag', 'serial_number'])
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+    if Asset.query.filter((Asset.asset_tag == data['asset_tag']) | (Asset.serial_number == data['serial_number'])).first():
+        return jsonify({'error': 'Asset tag or serial number already exists'}), 400
+    category = AssetCategory.query.get(int(data.get('category_id', 1)))
+    department = Department.query.get(int(data.get('department_id', 1)))
+    if not category or not department:
+        return jsonify({'error': 'Category or department not found'}), 400
+    asset = Asset(
+        name=data['name'],
+        asset_tag=data['asset_tag'],
+        serial_number=data['serial_number'],
+        category_id=category.id,
+        department_id=department.id,
+        assigned_to_user_id=data.get('assigned_to_user_id'),
+        status=data.get('status', 'available'),
+        value=float(data.get('value', 0.0)),
+        location=data.get('location', 'Main Office'),
+        description=data.get('description', ''),
+        qr_code=data.get('asset_tag', ''),
+    )
     db.session.add(asset)
     db.session.commit()
+    record_activity(get_jwt_identity(), 'Asset Registered', f"Registered asset {asset.name}")
     return jsonify({'id': asset.id, 'asset_tag': asset.asset_tag})
+
+
+@app.patch('/api/assets/<int:asset_id>')
+@jwt_required()
+def update_asset(asset_id):
+    asset = Asset.query.get_or_404(asset_id)
+    data = request.get_json() or {}
+    for field in ['status', 'location', 'description']:
+        if field in data:
+            setattr(asset, field, data[field])
+    if 'department_id' in data:
+        if not Department.query.get(data['department_id']):
+            return jsonify({'error': 'Department not found'}), 400
+        asset.department_id = data['department_id']
+    if 'assigned_to_user_id' in data:
+        if data['assigned_to_user_id'] and not User.query.get(data['assigned_to_user_id']):
+            return jsonify({'error': 'User not found'}), 400
+        asset.assigned_to_user_id = data['assigned_to_user_id']
+    if 'value' in data:
+        asset.value = float(data['value'])
+    if 'category_id' in data:
+        if not AssetCategory.query.get(data['category_id']):
+            return jsonify({'error': 'Category not found'}), 400
+        asset.category_id = data['category_id']
+    if 'warranty_end' in data:
+        asset.warranty_end = datetime.fromisoformat(data['warranty_end']).date() if data['warranty_end'] else None
+    db.session.commit()
+    record_activity(get_jwt_identity(), 'Asset Updated', f"Updated asset {asset.name}")
+    return jsonify({'ok': True})
+
+
+@app.delete('/api/assets/<int:asset_id>')
+@jwt_required()
+def delete_asset(asset_id):
+    asset = Asset.query.get_or_404(asset_id)
+    if AssetAllocation.query.filter_by(asset_id=asset_id).filter(AssetAllocation.status == 'assigned').first():
+        return jsonify({'error': 'Cannot delete asset with active allocations'}), 400
+    AssetImage.query.filter_by(asset_id=asset_id).delete()
+    AssetHistory.query.filter_by(asset_id=asset_id).delete()
+    db.session.delete(asset)
+    db.session.commit()
+    record_activity(get_jwt_identity(), 'Asset Deleted', f"Deleted asset {asset.name}")
+    return jsonify({'ok': True})
 
 
 @app.get('/api/bookings')
@@ -437,9 +726,27 @@ def bookings():
 @jwt_required()
 def create_booking():
     data = request.get_json() or {}
-    booking = Booking(resource_type=data['resource_type'], resource_name=data['resource_name'], booked_by_user_id=get_jwt_identity(), start_time=datetime.fromisoformat(data['start_time']), end_time=datetime.fromisoformat(data['end_time']), purpose=data.get('purpose', ''), status='confirmed')
+    try:
+        validate_required_fields(data, ['resource_type', 'resource_name', 'start_time', 'end_time'])
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+    start_time = datetime.fromisoformat(data['start_time'])
+    end_time = datetime.fromisoformat(data['end_time'])
+    if end_time <= start_time:
+        return jsonify({'error': 'End time must be after start time'}), 400
+    booking = Booking(
+        resource_type=data['resource_type'],
+        resource_name=data['resource_name'],
+        booked_by_user_id=get_jwt_identity(),
+        start_time=start_time,
+        end_time=end_time,
+        purpose=data.get('purpose', ''),
+        status=data.get('status', 'confirmed'),
+    )
     db.session.add(booking)
     db.session.commit()
+    record_activity(get_jwt_identity(), 'Booking Created', f"Booked {booking.resource_name}")
+    notify_user(get_jwt_identity(), 'Booking Confirmed', f"Your booking for {booking.resource_name} is confirmed.")
     return jsonify({'id': booking.id})
 
 
@@ -454,17 +761,55 @@ def maintenance():
 @jwt_required()
 def create_maintenance():
     data = request.get_json() or {}
-    request_item = MaintenanceRequest(asset_id=data['asset_id'], requested_by_user_id=get_jwt_identity(), issue_description=data['issue_description'], priority=data.get('priority', 'medium'))
+    request_item = MaintenanceRequest(
+        asset_id=data['asset_id'],
+        requested_by_user_id=get_jwt_identity(),
+        issue_description=data['issue_description'],
+        priority=data.get('priority', 'medium'),
+        status=data.get('status', 'pending'),
+    )
     db.session.add(request_item)
     db.session.commit()
+    record_activity(get_jwt_identity(), 'Maintenance Requested', f"Reported issue for asset {request_item.asset_id}")
+    notify_user(get_jwt_identity(), 'Maintenance Request Submitted', f"Maintenance request for asset {request_item.asset_id} is pending review.")
     return jsonify({'id': request_item.id})
+
+
+@app.patch('/api/maintenance/<int:maintenance_id>')
+@jwt_required()
+def update_maintenance(maintenance_id):
+    data = request.get_json() or {}
+    item = MaintenanceRequest.query.get_or_404(maintenance_id)
+    if 'status' in data:
+        item.status = data['status']
+    if 'priority' in data:
+        item.priority = data['priority']
+    if 'issue_description' in data:
+        item.issue_description = data['issue_description']
+    if item.status == 'resolved':
+        item.completed_at = datetime.utcnow()
+    db.session.commit()
+    record_activity(get_jwt_identity(), 'Maintenance Updated', f"Updated maintenance request {item.id}")
+    if item.status in {'approved', 'resolved'}:
+        notify_user(item.requested_by_user_id, 'Maintenance Update', f"Maintenance request {item.id} is now {item.status}.")
+    return jsonify({'id': item.id, 'status': item.status})
 
 
 @app.get('/api/notifications')
 @jwt_required()
 def notifications():
-    data = Notification.query.filter_by(user_id=get_jwt_identity()).all()
-    return jsonify([{'id': item.id, 'title': item.title, 'message': item.message, 'is_read': item.is_read} for item in data])
+    enqueue_overdue_return_notifications()
+    data = Notification.query.filter_by(user_id=get_jwt_identity()).order_by(Notification.created_at.desc()).all()
+    return jsonify([{'id': item.id, 'title': item.title, 'message': item.message, 'is_read': item.is_read, 'created_at': item.created_at.isoformat()} for item in data])
+
+
+@app.post('/api/notifications/<int:notification_id>/read')
+@jwt_required()
+def mark_notification_read(notification_id):
+    item = Notification.query.filter_by(id=notification_id, user_id=get_jwt_identity()).first_or_404()
+    item.is_read = True
+    db.session.commit()
+    return jsonify({'ok': True})
 
 
 @app.get('/api/activity')
@@ -472,6 +817,179 @@ def notifications():
 def activity():
     data = ActivityLog.query.order_by(ActivityLog.created_at.desc()).limit(10).all()
     return jsonify([{'action': item.action, 'details': item.details, 'created_at': item.created_at.isoformat()} for item in data])
+
+
+@app.get('/api/allocations')
+@jwt_required()
+def allocations():
+    data = AssetAllocation.query.order_by(AssetAllocation.assigned_date.desc()).all()
+    return jsonify([
+        {
+            'id': item.id,
+            'asset_id': item.asset_id,
+            'assigned_to_user_id': item.assigned_to_user_id,
+            'assigned_by_user_id': item.assigned_by_user_id,
+            'status': item.status,
+            'assigned_date': item.assigned_date.isoformat() if item.assigned_date else None,
+            'expected_return_date': item.expected_return_date.isoformat() if item.expected_return_date else None,
+        } for item in data
+    ])
+
+
+@app.post('/api/allocations')
+@jwt_required()
+def create_allocation():
+    data = request.get_json() or {}
+    asset = Asset.query.get_or_404(data['asset_id'])
+    allocation = AssetAllocation(
+        asset_id=asset.id,
+        assigned_to_user_id=data['assigned_to_user_id'],
+        assigned_by_user_id=get_jwt_identity(),
+        expected_return_date=datetime.fromisoformat(data['expected_return_date']) if data.get('expected_return_date') else None,
+        status=data.get('status', 'assigned'),
+    )
+    asset.status = 'assigned'
+    asset.assigned_to_user_id = data['assigned_to_user_id']
+    db.session.add(allocation)
+    db.session.commit()
+    record_activity(get_jwt_identity(), 'Asset Allocated', f"Allocated {asset.name} to user {data['assigned_to_user_id']}")
+    notify_user(data['assigned_to_user_id'], 'Asset Assigned', f"Asset {asset.name} has been assigned to you.")
+    if allocation.expected_return_date and allocation.expected_return_date < datetime.utcnow():
+        notify_user(data['assigned_to_user_id'], 'Return Overdue', f"Asset {asset.name} is already overdue for return.")
+    return jsonify({'id': allocation.id})
+
+
+@app.post('/api/allocations/<int:allocation_id>/return')
+@jwt_required()
+def return_allocation(allocation_id):
+    allocation = AssetAllocation.query.get_or_404(allocation_id)
+    allocation.returned_date = datetime.utcnow()
+    allocation.status = 'returned'
+    asset = Asset.query.get(allocation.asset_id)
+    if asset:
+        asset.status = 'available'
+        asset.assigned_to_user_id = None
+    db.session.commit()
+    record_activity(get_jwt_identity(), 'Asset Returned', f"Returned asset {asset.name if asset else allocation.asset_id}")
+    notify_user(allocation.assigned_to_user_id, 'Asset Returned', f"Asset {asset.name if asset else allocation.asset_id} has been returned.")
+    return jsonify({'ok': True})
+
+
+@app.get('/api/transfers')
+@jwt_required()
+def transfers():
+    data = TransferRequest.query.order_by(TransferRequest.requested_at.desc()).all()
+    return jsonify([
+        {
+            'id': item.id,
+            'asset_id': item.asset_id,
+            'from_department_id': item.from_department_id,
+            'to_department_id': item.to_department_id,
+            'reason': item.reason,
+            'status': item.status,
+            'requested_at': item.requested_at.isoformat() if item.requested_at else None,
+        } for item in data
+    ])
+
+
+@app.post('/api/transfers')
+@jwt_required()
+def create_transfer():
+    data = request.get_json() or {}
+    try:
+        validate_required_fields(data, ['asset_id', 'from_department_id', 'to_department_id'])
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+    if data['from_department_id'] == data['to_department_id']:
+        return jsonify({'error': 'Transfer destination must differ from source department'}), 400
+    transfer = TransferRequest(
+        asset_id=data['asset_id'],
+        requested_by_user_id=get_jwt_identity(),
+        from_department_id=data['from_department_id'],
+        to_department_id=data['to_department_id'],
+        reason=data.get('reason', ''),
+        status='pending',
+    )
+    db.session.add(transfer)
+    db.session.commit()
+    asset = Asset.query.get(transfer.asset_id)
+    record_activity(get_jwt_identity(), 'Transfer Requested', f"Requested transfer for asset {transfer.asset_id}")
+    notify_user(get_jwt_identity(), 'Transfer Requested', f"Transfer requested for asset {asset.name if asset else transfer.asset_id}.")
+    if asset and asset.assigned_to_user_id:
+        notify_user(asset.assigned_to_user_id, 'Transfer Requested', f"Asset {asset.name} is pending transfer to another department.")
+    return jsonify({'id': transfer.id})
+
+
+@app.post('/api/transfers/<int:transfer_id>/approve')
+@jwt_required()
+def approve_transfer(transfer_id):
+    transfer = TransferRequest.query.get_or_404(transfer_id)
+    if transfer.status != 'pending':
+        return jsonify({'error': 'Transfer is not pending'}), 400
+    transfer.status = 'approved'
+    transfer.approved_at = datetime.utcnow()
+    asset = Asset.query.get(transfer.asset_id)
+    if asset:
+        asset.department_id = transfer.to_department_id
+    db.session.commit()
+    record_activity(get_jwt_identity(), 'Transfer Approved', f"Approved transfer for asset {asset.name if asset else transfer.asset_id}")
+    notify_user(transfer.requested_by_user_id, 'Transfer Approved', f"Transfer for asset {asset.name if asset else transfer.asset_id} was approved.")
+    return jsonify({'ok': True})
+
+
+@app.get('/api/audits')
+@jwt_required()
+def audits():
+    data = AuditCycle.query.order_by(AuditCycle.scheduled_date.desc()).all()
+    return jsonify([
+        {
+            'id': item.id,
+            'title': item.title,
+            'department_id': item.department_id,
+            'scheduled_date': item.scheduled_date.isoformat() if item.scheduled_date else None,
+            'status': item.status,
+        } for item in data
+    ])
+
+
+@app.post('/api/audits')
+@jwt_required()
+def create_audit():
+    data = request.get_json() or {}
+    try:
+        validate_required_fields(data, ['title', 'department_id'])
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+    if not Department.query.get(data['department_id']):
+        return jsonify({'error': 'Department not found'}), 400
+    audit = AuditCycle(
+        title=data['title'],
+        department_id=data['department_id'],
+        scheduled_date=datetime.fromisoformat(data['scheduled_date']).date() if data.get('scheduled_date') else datetime.utcnow().date(),
+        status=data.get('status', 'planned'),
+        created_by_user_id=get_jwt_identity(),
+    )
+    db.session.add(audit)
+    db.session.commit()
+    record_activity(get_jwt_identity(), 'Audit Scheduled', f"Scheduled audit {audit.title}")
+    if data.get('status') in {'discrepancy', 'needs_follow_up'}:
+        notify_user(get_jwt_identity(), 'Audit Discrepancy', f"Audit {audit.title} flagged a discrepancy that requires follow-up.")
+    return jsonify({'id': audit.id})
+
+
+@app.get('/api/reports')
+@jwt_required()
+def reports():
+    asset_status_counts = db.session.query(Asset.status, func.count(Asset.id)).group_by(Asset.status).all()
+    maintenance_counts = db.session.query(MaintenanceRequest.status, func.count(MaintenanceRequest.id)).group_by(MaintenanceRequest.status).all()
+    latest_allocations = AssetAllocation.query.order_by(AssetAllocation.assigned_date.desc()).limit(5).all()
+    return jsonify({
+        'asset_status_counts': [{'status': status, 'count': count} for status, count in asset_status_counts],
+        'maintenance_counts': [{'status': status, 'count': count} for status, count in maintenance_counts],
+        'latest_allocations': [
+            {'asset_id': item.asset_id, 'assigned_to_user_id': item.assigned_to_user_id, 'status': item.status} for item in latest_allocations
+        ],
+    })
 
 
 if __name__ == '__main__':

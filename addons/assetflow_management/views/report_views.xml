@@ -1,0 +1,47 @@
+<odoo>
+    <record id="view_assetflow_dashboard_summary_form" model="ir.ui.view">
+        <field name="name">assetflow.dashboard.summary.form</field>
+        <field name="model">assetflow.dashboard.summary</field>
+        <field name="arch" type="xml">
+            <form string="AssetFlow Dashboard">
+                <sheet>
+                    <group>
+                        <field name="total_assets"/>
+                        <field name="available_assets"/>
+                        <field name="allocated_assets"/>
+                        <field name="maintenance_assets"/>
+                        <field name="total_asset_value"/>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="action_assetflow_dashboard_report" model="ir.actions.act_window">
+        <field name="name">AssetFlow Dashboard</field>
+        <field name="res_model">assetflow.dashboard.summary</field>
+        <field name="view_mode">form</field>
+        <field name="target">new</field>
+    </record>
+
+    <record id="action_assetflow_inventory_report" model="ir.actions.act_window">
+        <field name="name">Asset Inventory Report</field>
+        <field name="res_model">assetflow.asset</field>
+        <field name="view_mode">tree,form</field>
+        <field name="context">{'search_default_group_by_category': 1}</field>
+    </record>
+
+    <record id="action_assetflow_allocation_report" model="ir.actions.act_window">
+        <field name="name">Allocation History Report</field>
+        <field name="res_model">assetflow.asset.allocation</field>
+        <field name="view_mode">tree,form</field>
+        <field name="context">{'search_default_group_by_asset': 1}</field>
+    </record>
+
+    <record id="action_assetflow_maintenance_report" model="ir.actions.act_window">
+        <field name="name">Maintenance Cost Report</field>
+        <field name="res_model">assetflow.maintenance.request</field>
+        <field name="view_mode">tree,form</field>
+        <field name="context">{'search_default_group_by_asset': 1}</field>
+    </record>
+</odoo>

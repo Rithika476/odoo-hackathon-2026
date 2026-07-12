@@ -1,0 +1,76 @@
+<odoo>
+    <record id="view_assetflow_asset_request_tree" model="ir.ui.view">
+        <field name="name">assetflow.asset.request.tree</field>
+        <field name="model">assetflow.asset.request</field>
+        <field name="arch" type="xml">
+            <tree>
+                <field name="name"/>
+                <field name="employee_id"/>
+                <field name="department_id"/>
+                <field name="asset_id"/>
+                <field name="request_date"/>
+                <field name="state"/>
+            </tree>
+        </field>
+    </record>
+
+    <record id="view_assetflow_asset_request_form" model="ir.ui.view">
+        <field name="name">assetflow.asset.request.form</field>
+        <field name="model">assetflow.asset.request</field>
+        <field name="arch" type="xml">
+            <form string="Asset Request">
+                <header>
+                    <button name="action_submit" string="Submit Request" type="object" class="btn-primary" attrs="{'invisible':[('state','!=','draft')]}"/>
+                    <button name="action_approve" string="Approve" type="object" class="btn-success" attrs="{'invisible':[('state','!=','submitted')]}"/>
+                    <button name="action_reject" string="Reject" type="object" class="btn-danger" attrs="{'invisible':[('state','not in',('submitted','approved'))]}"/>
+                    <button name="action_allocate_asset" string="Allocate Asset" type="object" class="btn-warning" attrs="{'invisible':[('state','!=','approved')]}"/>
+                    <field name="state" widget="statusbar"/>
+                </header>
+                <sheet>
+                    <group>
+                        <field name="name"/>
+                        <field name="employee_id"/>
+                        <field name="department_id"/>
+                        <field name="asset_id"/>
+                        <field name="allocation_id"/>
+                        <field name="request_date"/>
+                        <field name="required_from"/>
+                        <field name="required_until"/>
+                        <field name="reason"/>
+                        <field name="notes"/>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_assetflow_asset_request_search" model="ir.ui.view">
+        <field name="name">assetflow.asset.request.search</field>
+        <field name="model">assetflow.asset.request</field>
+        <field name="arch" type="xml">
+            <search>
+                <field name="name"/>
+                <field name="employee_id"/>
+                <field name="department_id"/>
+                <field name="asset_id"/>
+                <filter string="Draft" name="draft" domain="[('state','=','draft')]"/>
+                <filter string="Submitted" name="submitted" domain="[('state','=','submitted')]"/>
+                <filter string="Approved" name="approved" domain="[('state','=','approved')]"/>
+                <filter string="Allocated" name="allocated" domain="[('state','=','allocated')]"/>
+                <group expand="1" string="Group By">
+                    <filter string="Employee" name="group_by_employee" context="{'group_by':'employee_id'}"/>
+                    <filter string="Department" name="group_by_department" context="{'group_by':'department_id'}"/>
+                    <filter string="Asset" name="group_by_asset" context="{'group_by':'asset_id'}"/>
+                    <filter string="Status" name="group_by_state" context="{'group_by':'state'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_assetflow_asset_requests" model="ir.actions.act_window">
+        <field name="name">Asset Requests</field>
+        <field name="res_model">assetflow.asset.request</field>
+        <field name="view_mode">tree,form</field>
+        <field name="search_view_id" ref="view_assetflow_asset_request_search"/>
+    </record>
+</odoo>

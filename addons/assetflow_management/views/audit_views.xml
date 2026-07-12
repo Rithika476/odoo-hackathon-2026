@@ -1,0 +1,41 @@
+<odoo>
+    <record id="view_assetflow_audit_tree" model="ir.ui.view">
+        <field name="name">assetflow.asset.audit.tree</field>
+        <field name="model">assetflow.asset.audit</field>
+        <field name="arch" type="xml">
+            <tree>
+                <field name="name"/>
+                <field name="audit_date"/>
+                <field name="department_id"/>
+                <field name="auditor_id"/>
+                <field name="state"/>
+            </tree>
+        </field>
+    </record>
+
+    <record id="view_assetflow_audit_form" model="ir.ui.view">
+        <field name="name">assetflow.asset.audit.form</field>
+        <field name="model">assetflow.asset.audit</field>
+        <field name="arch" type="xml">
+            <form string="Asset Audit">
+                <sheet>
+                    <group>
+                        <field name="name"/>
+                        <field name="audit_date"/>
+                        <field name="department_id"/>
+                        <field name="auditor_id"/>
+                        <field name="state"/>
+                        <field name="notes"/>
+                        <field name="asset_ids"/>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="action_assetflow_audits" model="ir.actions.act_window">
+        <field name="name">Asset Audits</field>
+        <field name="res_model">assetflow.asset.audit</field>
+        <field name="view_mode">tree,form</field>
+    </record>
+</odoo>

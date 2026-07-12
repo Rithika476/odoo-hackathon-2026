@@ -1,5 +1,19 @@
 <odoo>
     <menuitem id="menu_assetflow_root" name="AssetFlow" sequence="10"/>
-    <menuitem id="menu_assetflow_assets" name="Assets" parent="menu_assetflow_root" action="action_assetflow_assets" sequence="10"/>
-    <menuitem id="menu_assetflow_allocations" name="Allocations" parent="menu_assetflow_root" action="action_assetflow_allocations" sequence="20"/>
+    <menuitem id="menu_assetflow_operations" name="Operations" parent="menu_assetflow_root" sequence="10"/>
+    <menuitem id="menu_assetflow_assets" name="Assets" parent="menu_assetflow_operations" action="action_assetflow_assets" sequence="10"/>
+    <menuitem id="menu_assetflow_asset_requests" name="Asset Requests" parent="menu_assetflow_operations" action="action_assetflow_asset_requests" sequence="15"/>
+    <menuitem id="menu_assetflow_allocations" name="Allocations" parent="menu_assetflow_operations" action="action_assetflow_allocations" sequence="20"/>
+    <menuitem id="menu_assetflow_organization" name="Organization" parent="menu_assetflow_root" sequence="20"/>
+    <menuitem id="menu_assetflow_departments" name="Departments" parent="menu_assetflow_organization" action="action_assetflow_departments" sequence="10"/>
+    <menuitem id="menu_assetflow_employees" name="Employees" parent="menu_assetflow_organization" action="action_assetflow_employees" sequence="20"/>
+    <menuitem id="menu_assetflow_service" name="Service" parent="menu_assetflow_root" sequence="30"/>
+    <menuitem id="menu_assetflow_maintenance" name="Maintenance" parent="menu_assetflow_service" action="action_assetflow_maintenance_requests" sequence="10"/>
+    <menuitem id="menu_assetflow_bookings" name="Bookings" parent="menu_assetflow_service" action="action_assetflow_bookings" sequence="20"/>
+    <menuitem id="menu_assetflow_audits" name="Audits" parent="menu_assetflow_service" action="action_assetflow_audits" sequence="30"/>
+    <menuitem id="menu_assetflow_reports" name="Reports" parent="menu_assetflow_root" sequence="40"/>
+    <menuitem id="menu_assetflow_dashboard_report" name="Dashboard" parent="menu_assetflow_reports" action="action_assetflow_dashboard_report" sequence="10"/>
+    <menuitem id="menu_assetflow_inventory_report" name="Asset Inventory" parent="menu_assetflow_reports" action="action_assetflow_inventory_report" sequence="20"/>
+    <menuitem id="menu_assetflow_allocation_report" name="Allocation History" parent="menu_assetflow_reports" action="action_assetflow_allocation_report" sequence="30"/>
+    <menuitem id="menu_assetflow_maintenance_report" name="Maintenance Cost" parent="menu_assetflow_reports" action="action_assetflow_maintenance_report" sequence="40"/>
 </odoo>

@@ -1,0 +1,44 @@
+<odoo>
+    <record id="view_assetflow_maintenance_tree" model="ir.ui.view">
+        <field name="name">assetflow.maintenance.request.tree</field>
+        <field name="model">assetflow.maintenance.request</field>
+        <field name="arch" type="xml">
+            <tree>
+                <field name="asset_id"/>
+                <field name="employee_id"/>
+                <field name="priority"/>
+                <field name="state"/>
+            </tree>
+        </field>
+    </record>
+
+    <record id="view_assetflow_maintenance_form" model="ir.ui.view">
+        <field name="name">assetflow.maintenance.request.form</field>
+        <field name="model">assetflow.maintenance.request</field>
+        <field name="arch" type="xml">
+            <form string="Maintenance Request">
+                <header>
+                    <button name="action_send_to_maintenance" string="Submit Request" type="object" class="btn-primary" attrs="{'invisible':[('state','!=','draft')]}"/>
+                    <button name="action_start_maintenance" string="Start Work" type="object" class="btn-warning" attrs="{'invisible':[('state','!=','pending')]}"/>
+                    <button name="action_complete_maintenance" string="Complete" type="object" class="btn-success" attrs="{'invisible':[('state','!=','in_progress')]}"/>
+                    <field name="state" widget="statusbar"/>
+                </header>
+                <sheet>
+                    <group>
+                        <field name="asset_id"/>
+                        <field name="employee_id"/>
+                        <field name="priority"/>
+                        <field name="issue_description"/>
+                        <field name="notes"/>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="action_assetflow_maintenance_requests" model="ir.actions.act_window">
+        <field name="name">Maintenance Requests</field>
+        <field name="res_model">assetflow.maintenance.request</field>
+        <field name="view_mode">tree,form</field>
+    </record>
+</odoo>

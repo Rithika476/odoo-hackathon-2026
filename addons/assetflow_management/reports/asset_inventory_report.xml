@@ -1,0 +1,17 @@
+<odoo>
+    <record id="view_assetflow_inventory_report_tree" model="ir.ui.view">
+        <field name="name">assetflow.asset.inventory.report.tree</field>
+        <field name="model">assetflow.asset</field>
+        <field name="arch" type="xml">
+            <tree>
+                <field name="name"/>
+                <field name="asset_tag"/>
+                <field name="category_id"/>
+                <field name="department_id"/>
+                <field name="state"/>
+                <field name="location"/>
+                <field name="value"/>
+            </tree>
+        </field>
+    </record>
+</odoo>

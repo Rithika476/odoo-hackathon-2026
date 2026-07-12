@@ -23,7 +23,13 @@ export default function Dashboard({ user }) {
           <h5 className="card-title">Recent Activity</h5>
           <ul className="list-group list-group-flush">
             {data.recent_activity.map((item, index) => (
-              <li key={index} className="list-group-item">{item.action}: {item.details}</li>
+              <li key={index} className="list-group-item d-flex justify-content-between align-items-start">
+                <div>
+                  <strong>{item.action}</strong>
+                  <div>{item.details}</div>
+                </div>
+                <small className="text-muted">{item.created_at}</small>
+              </li>
             ))}
           </ul>
         </div>
