@@ -178,11 +178,17 @@ class MaintenanceRequest(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     asset_id = db.Column(db.Integer, db.ForeignKey('assets.id'), nullable=False)
     requested_by_user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
-    technician_id = db.Column(db.Integer, db.ForeignKey('technicians.id'), nullable=True)
+    assigned_technician_id = db.Column(db.Integer, db.ForeignKey('technicians.id'), nullable=True)
     issue_description = db.Column(db.Text, nullable=False)
     priority = db.Column(db.String(20), default='medium')
     status = db.Column(db.String(30), default='pending')
+    photo_url = db.Column(db.String(255), nullable=True)
     requested_at = db.Column(db.DateTime, default=datetime.utcnow)
+    approved_at = db.Column(db.DateTime)
+    approved_by_user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    rejected_at = db.Column(db.DateTime)
+    rejected_by_user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    started_at = db.Column(db.DateTime)
     completed_at = db.Column(db.DateTime)
 
 
@@ -880,6 +886,15 @@ def delete_booking(booking_id):
     return jsonify({'ok': True})
 
 
+@app.get('/api/technicians')
+@jwt_required()
+def technicians():
+    data = Technician.query.all()
+    return jsonify([
+        {'id': item.id, 'name': item.name, 'specialty': item.specialty} for item in data
+    ])
+
+
 @app.get('/api/maintenance')
 @jwt_required()
 def maintenance():
@@ -891,9 +906,13 @@ def maintenance():
             'issue_description': item.issue_description,
             'priority': item.priority,
             'status': item.status,
+            'photo_url': item.photo_url,
             'requested_by_user_id': item.requested_by_user_id,
             'assigned_technician_id': item.assigned_technician_id,
-            'created_at': item.created_at.isoformat() if item.created_at else None,
+            'created_at': item.requested_at.isoformat() if item.requested_at else None,
+            'approved_at': item.approved_at.isoformat() if item.approved_at else None,
+            'rejected_at': item.rejected_at.isoformat() if item.rejected_at else None,
+            'started_at': item.started_at.isoformat() if item.started_at else None,
             'completed_at': item.completed_at.isoformat() if item.completed_at else None,
         } for item in data
     ])
@@ -922,6 +941,7 @@ def create_maintenance():
         requested_by_user_id=get_jwt_identity(),
         issue_description=data['issue_description'],
         priority=data.get('priority', 'medium'),
+        photo_url=data.get('photo_url'),
         status='pending',
     )
     db.session.add(request_item)
@@ -995,7 +1015,7 @@ def update_maintenance(maintenance_id):
                     db.session.add(history)
     
     if 'priority' in data:
-        valid_priorities = {'low', 'medium', 'high'}
+        valid_priorities = {'low', 'medium', 'high', 'critical'}
         if data['priority'] not in valid_priorities:
             return jsonify({'error': f'Invalid priority. Must be one of: {", ".join(valid_priorities)}'}), 400
         item.priority = data['priority']
@@ -1011,8 +1031,11 @@ def update_maintenance(maintenance_id):
     db.session.commit()
     record_activity(get_jwt_identity(), 'Maintenance Updated', f"Updated maintenance request {item.id} from {old_status if 'old_status' in locals() else item.status} to {item.status}")
     
-    if item.status in {'approved', 'rejected', 'resolved'}:
+    if item.status in {'approved', 'rejected', 'resolved', 'in_progress'}:
         notify_user(item.requested_by_user_id, 'Maintenance Update', f"Maintenance request {item.id} is now {item.status}.")
+    
+    if 'assigned_technician_id' in data:
+        notify_user(item.requested_by_user_id, 'Maintenance Update', f"Technician {Technician.query.get(item.assigned_technician_id).name} has been assigned to request {item.id}.")
     
     return jsonify({'id': item.id, 'status': item.status})
 
