@@ -1,0 +1,5 @@
+# AssetFlow
+
+Enterprise Asset & Resource Management System
+
+Odoo Hackathon 2026
