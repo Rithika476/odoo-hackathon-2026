@@ -3,81 +3,250 @@ import sqlalchemy as sa
 
 
 def upgrade():
-    op.execute("""
-    CREATE TABLE IF NOT EXISTS roles (
-        id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
-        name VARCHAR(50) NOT NULL UNIQUE,
-        description VARCHAR(200)
+    op.create_table(
+        'roles',
+        sa.Column('id', sa.Integer(), nullable=False),
+        sa.Column('name', sa.String(length=50), nullable=False),
+        sa.Column('description', sa.String(length=200), nullable=True),
+        sa.PrimaryKeyConstraint('id'),
+        sa.UniqueConstraint('name')
     )
-    """)
-    op.execute("""
-    CREATE TABLE IF NOT EXISTS departments (
-        id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
-        name VARCHAR(100) NOT NULL UNIQUE,
-        code VARCHAR(20) NOT NULL UNIQUE,
-        description VARCHAR(200),
-        head_user_id INTEGER
+    op.create_table(
+        'departments',
+        sa.Column('id', sa.Integer(), nullable=False),
+        sa.Column('name', sa.String(length=100), nullable=False),
+        sa.Column('code', sa.String(length=20), nullable=False),
+        sa.Column('description', sa.String(length=200), nullable=True),
+        sa.Column('head_user_id', sa.Integer(), nullable=True),
+        sa.PrimaryKeyConstraint('id'),
+        sa.UniqueConstraint('name'),
+        sa.UniqueConstraint('code')
     )
-    """)
-    op.execute("""
-    CREATE TABLE IF NOT EXISTS users (
-        id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
-        full_name VARCHAR(120) NOT NULL,
-        email VARCHAR(120) NOT NULL UNIQUE,
-        password_hash VARCHAR(255) NOT NULL,
-        role_id INTEGER NOT NULL,
-        department_id INTEGER,
-        is_active BOOLEAN DEFAULT 1,
-        created_at DATETIME
+    op.create_table(
+        'users',
+        sa.Column('id', sa.Integer(), nullable=False),
+        sa.Column('full_name', sa.String(length=120), nullable=False),
+        sa.Column('email', sa.String(length=120), nullable=False),
+        sa.Column('password_hash', sa.String(length=255), nullable=False),
+        sa.Column('role_id', sa.Integer(), nullable=False),
+        sa.Column('department_id', sa.Integer(), nullable=True),
+        sa.Column('is_active', sa.Boolean(), nullable=True),
+        sa.Column('created_at', sa.DateTime(), nullable=True),
+        sa.PrimaryKeyConstraint('id'),
+        sa.UniqueConstraint('email'),
+        sa.ForeignKeyConstraint(['role_id'], ['roles.id']),
+        sa.ForeignKeyConstraint(['department_id'], ['departments.id'])
     )
-    """)
-    op.execute("""
-    CREATE TABLE IF NOT EXISTS employees (
-        id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER NOT NULL UNIQUE,
-        department_id INTEGER NOT NULL,
-        job_title VARCHAR(100) NOT NULL,
-        phone VARCHAR(30),
-        location VARCHAR(100),
-        hire_date DATE,
-        status VARCHAR(20) DEFAULT 'active',
-        is_department_head BOOLEAN DEFAULT 0,
-        is_asset_manager BOOLEAN DEFAULT 0
+    op.create_index(op.f('ix_users_email'), 'users', ['email'], unique=True)
+    op.create_table(
+        'employees',
+        sa.Column('id', sa.Integer(), nullable=False),
+        sa.Column('user_id', sa.Integer(), nullable=False),
+        sa.Column('department_id', sa.Integer(), nullable=False),
+        sa.Column('job_title', sa.String(length=100), nullable=False),
+        sa.Column('phone', sa.String(length=30), nullable=True),
+        sa.Column('location', sa.String(length=100), nullable=True),
+        sa.Column('hire_date', sa.Date(), nullable=True),
+        sa.Column('status', sa.String(length=20), nullable=True),
+        sa.Column('is_department_head', sa.Boolean(), nullable=True),
+        sa.Column('is_asset_manager', sa.Boolean(), nullable=True),
+        sa.PrimaryKeyConstraint('id'),
+        sa.UniqueConstraint('user_id'),
+        sa.ForeignKeyConstraint(['user_id'], ['users.id']),
+        sa.ForeignKeyConstraint(['department_id'], ['departments.id'])
     )
-    """)
-    op.execute("""
-    CREATE TABLE IF NOT EXISTS asset_categories (
-        id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
-        name VARCHAR(100) NOT NULL UNIQUE,
-        code VARCHAR(20) NOT NULL UNIQUE,
-        description VARCHAR(200)
+    op.create_table(
+        'asset_categories',
+        sa.Column('id', sa.Integer(), nullable=False),
+        sa.Column('name', sa.String(length=100), nullable=False),
+        sa.Column('code', sa.String(length=20), nullable=False),
+        sa.Column('description', sa.String(length=200), nullable=True),
+        sa.PrimaryKeyConstraint('id'),
+        sa.UniqueConstraint('name'),
+        sa.UniqueConstraint('code')
     )
-    """)
-    op.execute("""
-    CREATE TABLE IF NOT EXISTS assets (
-        id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
-        name VARCHAR(150) NOT NULL,
-        asset_tag VARCHAR(50) NOT NULL UNIQUE,
-        serial_number VARCHAR(80) NOT NULL UNIQUE,
-        category_id INTEGER NOT NULL,
-        department_id INTEGER NOT NULL,
-        assigned_to_user_id INTEGER,
-        status VARCHAR(30) DEFAULT 'available',
-        purchase_date DATE,
-        warranty_end DATE,
-        location VARCHAR(100) DEFAULT 'Main Office',
-        value NUMERIC(10, 2) DEFAULT 0.00,
-        description TEXT,
-        qr_code VARCHAR(200),
-        created_at DATETIME
+    op.create_table(
+        'assets',
+        sa.Column('id', sa.Integer(), nullable=False),
+        sa.Column('name', sa.String(length=150), nullable=False),
+        sa.Column('asset_tag', sa.String(length=50), nullable=False),
+        sa.Column('serial_number', sa.String(length=80), nullable=False),
+        sa.Column('category_id', sa.Integer(), nullable=False),
+        sa.Column('department_id', sa.Integer(), nullable=False),
+        sa.Column('assigned_to_user_id', sa.Integer(), nullable=True),
+        sa.Column('status', sa.String(length=30), nullable=True),
+        sa.Column('purchase_date', sa.Date(), nullable=True),
+        sa.Column('warranty_end', sa.Date(), nullable=True),
+        sa.Column('location', sa.String(length=100), nullable=True),
+        sa.Column('value', sa.Numeric(precision=10, scale=2), nullable=True),
+        sa.Column('description', sa.Text(), nullable=True),
+        sa.Column('qr_code', sa.String(length=200), nullable=True),
+        sa.Column('created_at', sa.DateTime(), nullable=True),
+        sa.PrimaryKeyConstraint('id'),
+        sa.UniqueConstraint('asset_tag'),
+        sa.UniqueConstraint('serial_number'),
+        sa.ForeignKeyConstraint(['category_id'], ['asset_categories.id']),
+        sa.ForeignKeyConstraint(['department_id'], ['departments.id']),
+        sa.ForeignKeyConstraint(['assigned_to_user_id'], ['users.id'])
     )
-    """)
+    op.create_index(op.f('ix_assets_asset_tag'), 'assets', ['asset_tag'], unique=True)
+    op.create_table(
+        'asset_images',
+        sa.Column('id', sa.Integer(), nullable=False),
+        sa.Column('asset_id', sa.Integer(), nullable=False),
+        sa.Column('image_url', sa.String(length=255), nullable=False),
+        sa.Column('caption', sa.String(length=120), nullable=True),
+        sa.PrimaryKeyConstraint('id'),
+        sa.ForeignKeyConstraint(['asset_id'], ['assets.id'])
+    )
+    op.create_table(
+        'asset_allocations',
+        sa.Column('id', sa.Integer(), nullable=False),
+        sa.Column('asset_id', sa.Integer(), nullable=False),
+        sa.Column('assigned_to_user_id', sa.Integer(), nullable=False),
+        sa.Column('assigned_by_user_id', sa.Integer(), nullable=False),
+        sa.Column('assigned_date', sa.DateTime(), nullable=True),
+        sa.Column('expected_return_date', sa.DateTime(), nullable=True),
+        sa.Column('returned_date', sa.DateTime(), nullable=True),
+        sa.Column('status', sa.String(length=30), nullable=True),
+        sa.PrimaryKeyConstraint('id'),
+        sa.ForeignKeyConstraint(['asset_id'], ['assets.id']),
+        sa.ForeignKeyConstraint(['assigned_to_user_id'], ['users.id']),
+        sa.ForeignKeyConstraint(['assigned_by_user_id'], ['users.id'])
+    )
+    op.create_table(
+        'asset_history',
+        sa.Column('id', sa.Integer(), nullable=False),
+        sa.Column('asset_id', sa.Integer(), nullable=False),
+        sa.Column('user_id', sa.Integer(), nullable=False),
+        sa.Column('action', sa.String(length=100), nullable=False),
+        sa.Column('details', sa.Text(), nullable=True),
+        sa.Column('created_at', sa.DateTime(), nullable=True),
+        sa.PrimaryKeyConstraint('id'),
+        sa.ForeignKeyConstraint(['asset_id'], ['assets.id']),
+        sa.ForeignKeyConstraint(['user_id'], ['users.id'])
+    )
+    op.create_table(
+        'transfer_requests',
+        sa.Column('id', sa.Integer(), nullable=False),
+        sa.Column('asset_id', sa.Integer(), nullable=False),
+        sa.Column('requested_by_user_id', sa.Integer(), nullable=False),
+        sa.Column('from_department_id', sa.Integer(), nullable=False),
+        sa.Column('to_department_id', sa.Integer(), nullable=False),
+        sa.Column('reason', sa.Text(), nullable=True),
+        sa.Column('status', sa.String(length=30), nullable=True),
+        sa.Column('requested_at', sa.DateTime(), nullable=True),
+        sa.Column('approved_at', sa.DateTime(), nullable=True),
+        sa.PrimaryKeyConstraint('id'),
+        sa.ForeignKeyConstraint(['asset_id'], ['assets.id']),
+        sa.ForeignKeyConstraint(['requested_by_user_id'], ['users.id']),
+        sa.ForeignKeyConstraint(['from_department_id'], ['departments.id']),
+        sa.ForeignKeyConstraint(['to_department_id'], ['departments.id'])
+    )
+    op.create_table(
+        'bookings',
+        sa.Column('id', sa.Integer(), nullable=False),
+        sa.Column('resource_type', sa.String(length=50), nullable=False),
+        sa.Column('resource_name', sa.String(length=100), nullable=False),
+        sa.Column('booked_by_user_id', sa.Integer(), nullable=False),
+        sa.Column('start_time', sa.DateTime(), nullable=False),
+        sa.Column('end_time', sa.DateTime(), nullable=False),
+        sa.Column('purpose', sa.String(length=200), nullable=True),
+        sa.Column('status', sa.String(length=30), nullable=True),
+        sa.Column('created_at', sa.DateTime(), nullable=True),
+        sa.PrimaryKeyConstraint('id'),
+        sa.ForeignKeyConstraint(['booked_by_user_id'], ['users.id'])
+    )
+    op.create_table(
+        'technicians',
+        sa.Column('id', sa.Integer(), nullable=False),
+        sa.Column('name', sa.String(length=120), nullable=False),
+        sa.Column('email', sa.String(length=120), nullable=False),
+        sa.Column('phone', sa.String(length=30), nullable=True),
+        sa.Column('specialty', sa.String(length=80), nullable=True),
+        sa.Column('is_active', sa.Boolean(), nullable=True),
+        sa.PrimaryKeyConstraint('id'),
+        sa.UniqueConstraint('email')
+    )
+    op.create_table(
+        'maintenance_requests',
+        sa.Column('id', sa.Integer(), nullable=False),
+        sa.Column('asset_id', sa.Integer(), nullable=False),
+        sa.Column('requested_by_user_id', sa.Integer(), nullable=False),
+        sa.Column('technician_id', sa.Integer(), nullable=True),
+        sa.Column('issue_description', sa.Text(), nullable=False),
+        sa.Column('priority', sa.String(length=20), nullable=True),
+        sa.Column('status', sa.String(length=30), nullable=True),
+        sa.Column('requested_at', sa.DateTime(), nullable=True),
+        sa.Column('completed_at', sa.DateTime(), nullable=True),
+        sa.PrimaryKeyConstraint('id'),
+        sa.ForeignKeyConstraint(['asset_id'], ['assets.id']),
+        sa.ForeignKeyConstraint(['requested_by_user_id'], ['users.id']),
+        sa.ForeignKeyConstraint(['technician_id'], ['technicians.id'])
+    )
+    op.create_table(
+        'audit_cycles',
+        sa.Column('id', sa.Integer(), nullable=False),
+        sa.Column('title', sa.String(length=120), nullable=False),
+        sa.Column('department_id', sa.Integer(), nullable=False),
+        sa.Column('scheduled_date', sa.Date(), nullable=False),
+        sa.Column('status', sa.String(length=30), nullable=True),
+        sa.Column('created_by_user_id', sa.Integer(), nullable=False),
+        sa.PrimaryKeyConstraint('id'),
+        sa.ForeignKeyConstraint(['department_id'], ['departments.id']),
+        sa.ForeignKeyConstraint(['created_by_user_id'], ['users.id'])
+    )
+    op.create_table(
+        'audit_details',
+        sa.Column('id', sa.Integer(), nullable=False),
+        sa.Column('audit_cycle_id', sa.Integer(), nullable=False),
+        sa.Column('asset_id', sa.Integer(), nullable=False),
+        sa.Column('status', sa.String(length=30), nullable=True),
+        sa.Column('notes', sa.Text(), nullable=True),
+        sa.Column('verified_by_user_id', sa.Integer(), nullable=True),
+        sa.PrimaryKeyConstraint('id'),
+        sa.ForeignKeyConstraint(['audit_cycle_id'], ['audit_cycles.id']),
+        sa.ForeignKeyConstraint(['asset_id'], ['assets.id']),
+        sa.ForeignKeyConstraint(['verified_by_user_id'], ['users.id'])
+    )
+    op.create_table(
+        'notifications',
+        sa.Column('id', sa.Integer(), nullable=False),
+        sa.Column('user_id', sa.Integer(), nullable=False),
+        sa.Column('title', sa.String(length=120), nullable=False),
+        sa.Column('message', sa.Text(), nullable=False),
+        sa.Column('is_read', sa.Boolean(), nullable=True),
+        sa.Column('created_at', sa.DateTime(), nullable=True),
+        sa.PrimaryKeyConstraint('id'),
+        sa.ForeignKeyConstraint(['user_id'], ['users.id'])
+    )
+    op.create_table(
+        'activity_logs',
+        sa.Column('id', sa.Integer(), nullable=False),
+        sa.Column('user_id', sa.Integer(), nullable=False),
+        sa.Column('action', sa.String(length=120), nullable=False),
+        sa.Column('details', sa.Text(), nullable=True),
+        sa.Column('created_at', sa.DateTime(), nullable=True),
+        sa.PrimaryKeyConstraint('id'),
+        sa.ForeignKeyConstraint(['user_id'], ['users.id'])
+    )
 
 
 def downgrade():
-    op.execute("DROP TABLE IF EXISTS assets")
-    op.execute("DROP TABLE IF EXISTS asset_categories")
-    op.execute("DROP TABLE IF EXISTS employees")
-    op.execute("DROP TABLE IF EXISTS users")
-    op.execute("DROP TABLE IF EXISTS departments")
-    op.execute("DROP TABLE IF EXISTS roles")
+    op.drop_table('activity_logs')
+    op.drop_table('notifications')
+    op.drop_table('audit_details')
+    op.drop_table('audit_cycles')
+    op.drop_table('maintenance_requests')
+    op.drop_table('technicians')
+    op.drop_table('bookings')
+    op.drop_table('transfer_requests')
+    op.drop_table('asset_history')
+    op.drop_table('asset_allocations')
+    op.drop_table('asset_images')
+    op.drop_table('assets')
+    op.drop_table('asset_categories')
+    op.drop_table('employees')
+    op.drop_table('users')
+    op.drop_table('departments')
+    op.drop_table('roles')
