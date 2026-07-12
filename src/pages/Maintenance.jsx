@@ -37,6 +37,35 @@ export default function Maintenance() {
     return asset ? asset.name : `Asset #${assetId}`
   }
 
+  const getStatusBadge = (status) => {
+    const colors = {
+      'pending': 'warning',
+      'approved': 'info',
+      'rejected': 'danger',
+      'in_progress': 'primary',
+      'resolved': 'success'
+    }
+    return <span className={`badge bg-${colors[status] || 'secondary'}`}>{status.replace('_', ' ')}</span>
+  }
+
+  const getNextActions = (item) => {
+    switch (item.status) {
+      case 'pending':
+        return (
+          <>
+            <button className="btn btn-sm btn-info me-1" onClick={() => updateStatus(item.id, 'approved')}>Approve</button>
+            <button className="btn btn-sm btn-danger" onClick={() => updateStatus(item.id, 'rejected')}>Reject</button>
+          </>
+        )
+      case 'approved':
+        return <button className="btn btn-sm btn-primary" onClick={() => updateStatus(item.id, 'in_progress')}>Start Work</button>
+      case 'in_progress':
+        return <button className="btn btn-sm btn-success" onClick={() => updateStatus(item.id, 'resolved')}>Resolve</button>
+      default:
+        return '—'
+    }
+  }
+
   return (
     <div>
       <h2 className="mb-4">Maintenance Requests</h2>
@@ -48,8 +77,14 @@ export default function Maintenance() {
               {assets.map(asset => <option key={asset.id} value={asset.id}>{asset.name}</option>)}
             </select>
           </div>
-          <div className="col-md-4"><input className="form-control" placeholder="Issue" value={form.issue_description} onChange={e => setForm({ ...form, issue_description: e.target.value })} /></div>
-          <div className="col-md-2"><select className="form-select" value={form.priority} onChange={e => setForm({ ...form, priority: e.target.value })}><option>low</option><option>medium</option><option>high</option></select></div>
+          <div className="col-md-4"><input className="form-control" placeholder="Issue Description" value={form.issue_description} onChange={e => setForm({ ...form, issue_description: e.target.value })} /></div>
+          <div className="col-md-2">
+            <select className="form-select" value={form.priority} onChange={e => setForm({ ...form, priority: e.target.value })}>
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+            </select>
+          </div>
           <div className="col-md-2"><button className="btn btn-primary w-100">Submit</button></div>
         </form>
       </div>
@@ -57,7 +92,7 @@ export default function Maintenance() {
         <div className="card-body">
           <table className="table table-hover">
             <thead><tr><th>Asset</th><th>Issue</th><th>Priority</th><th>Status</th><th>Action</th></tr></thead>
-            <tbody>{items.map(item => <tr key={item.id}><td>{getAssetName(item.asset_id)}</td><td>{item.issue_description}</td><td>{item.priority}</td><td>{item.status}</td><td>{item.status !== 'resolved' ? <button className="btn btn-sm btn-outline-success" onClick={() => updateStatus(item.id, 'resolved')}>Resolve</button> : '—'}</td></tr>)}</tbody>
+            <tbody>{items.map(item => <tr key={item.id}><td>{getAssetName(item.asset_id)}</td><td>{item.issue_description}</td><td><span className={`badge bg-${item.priority === 'high' ? 'danger' : item.priority === 'medium' ? 'warning' : 'secondary'}`}>{item.priority}</span></td><td>{getStatusBadge(item.status)}</td><td>{getNextActions(item)}</td></tr>)}</tbody>
           </table>
         </div>
       </div>

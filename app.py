@@ -155,6 +155,9 @@ class TransferRequest(db.Model):
     status = db.Column(db.String(30), default='pending')
     requested_at = db.Column(db.DateTime, default=datetime.utcnow)
     approved_at = db.Column(db.DateTime)
+    approved_by_user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    rejected_by_user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    rejected_at = db.Column(db.DateTime)
 
 
 class Booking(db.Model):
@@ -274,6 +277,32 @@ def enqueue_overdue_return_notifications():
             ).first()
             if not existing:
                 notify_user(allocation.assigned_to_user_id, 'Return Overdue', f'Asset {allocation.asset_id} is overdue for return.')
+
+
+def process_booking_updates():
+    now = datetime.utcnow()
+    reminder_threshold = now + timedelta(hours=1)
+    upcoming = Booking.query.filter(
+        Booking.status == 'upcoming',
+        Booking.start_time <= reminder_threshold,
+        Booking.start_time > now
+    ).all()
+    for b in upcoming:
+        msg = f"Reminder: Your booking for {b.resource_name} starts at {b.start_time.strftime('%H:%M')}."
+        existing = Notification.query.filter_by(user_id=b.booked_by_user_id, title='Booking Reminder', message=msg).first()
+        if not existing:
+            notify_user(b.booked_by_user_id, 'Booking Reminder', msg)
+
+    starting_now = Booking.query.filter(Booking.status == 'upcoming', Booking.start_time <= now).all()
+    for b in starting_now:
+        b.status = 'ongoing'
+
+    ending_now = Booking.query.filter(Booking.status == 'ongoing', Booking.end_time <= now).all()
+    for b in ending_now:
+        b.status = 'completed'
+
+    if starting_now or ending_now:
+        db.session.commit()
 
 
 def seed_database():
@@ -718,8 +747,19 @@ def delete_asset(asset_id):
 @app.get('/api/bookings')
 @jwt_required()
 def bookings():
-    data = Booking.query.all()
-    return jsonify([{'id': item.id, 'resource_type': item.resource_type, 'resource_name': item.resource_name, 'purpose': item.purpose, 'status': item.status} for item in data])
+    data = Booking.query.order_by(Booking.start_time.desc()).all()
+    return jsonify([
+        {
+            'id': item.id,
+            'resource_type': item.resource_type,
+            'resource_name': item.resource_name,
+            'purpose': item.purpose,
+            'status': item.status,
+            'start_time': item.start_time.isoformat() if item.start_time else None,
+            'end_time': item.end_time.isoformat() if item.end_time else None,
+            'booked_by_user_id': item.booked_by_user_id,
+        } for item in data
+    ])
 
 
 @app.post('/api/bookings')
@@ -730,10 +770,26 @@ def create_booking():
         validate_required_fields(data, ['resource_type', 'resource_name', 'start_time', 'end_time'])
     except ValueError as exc:
         return jsonify({'error': str(exc)}), 400
+    
     start_time = datetime.fromisoformat(data['start_time'])
     end_time = datetime.fromisoformat(data['end_time'])
+    
     if end_time <= start_time:
         return jsonify({'error': 'End time must be after start time'}), 400
+    
+    if start_time < datetime.utcnow():
+        return jsonify({'error': 'Start time must be in the future'}), 400
+    
+    overlapping = Booking.query.filter(
+        Booking.resource_name == data['resource_name'],
+        Booking.status.in_({'upcoming', 'ongoing'}),
+        Booking.start_time < end_time,
+        Booking.end_time > start_time
+    ).first()
+    
+    if overlapping:
+        return jsonify({'error': 'Resource is already booked for this time slot'}), 400
+    
     booking = Booking(
         resource_type=data['resource_type'],
         resource_name=data['resource_name'],
@@ -741,37 +797,139 @@ def create_booking():
         start_time=start_time,
         end_time=end_time,
         purpose=data.get('purpose', ''),
-        status=data.get('status', 'confirmed'),
+        status='upcoming',
     )
     db.session.add(booking)
     db.session.commit()
-    record_activity(get_jwt_identity(), 'Booking Created', f"Booked {booking.resource_name}")
-    notify_user(get_jwt_identity(), 'Booking Confirmed', f"Your booking for {booking.resource_name} is confirmed.")
+    
+    record_activity(get_jwt_identity(), 'Booking Created', f"Booked {booking.resource_name} from {start_time} to {end_time}")
+    notify_user(get_jwt_identity(), 'Booking Confirmed', f"Your booking for {booking.resource_name} is confirmed for {start_time.strftime('%Y-%m-%d %H:%M')}.")
+    
     return jsonify({'id': booking.id})
+
+
+@app.patch('/api/bookings/<int:booking_id>')
+@jwt_required()
+def update_booking(booking_id):
+    booking = Booking.query.get_or_404(booking_id)
+    data = request.get_json() or {}
+    
+    if booking.booked_by_user_id != get_jwt_identity():
+        return jsonify({'error': 'You can only modify your own bookings'}), 400
+    
+    if booking.status in {'completed', 'cancelled'}:
+        return jsonify({'error': 'Cannot modify completed or cancelled bookings'}), 400
+    
+    if 'start_time' in data or 'end_time' in data:
+        new_start = datetime.fromisoformat(data['start_time']) if 'start_time' in data else booking.start_time
+        new_end = datetime.fromisoformat(data['end_time']) if 'end_time' in data else booking.end_time
+        
+        if new_end <= new_start:
+            return jsonify({'error': 'End time must be after start time'}), 400
+        
+        if new_start < datetime.utcnow():
+            return jsonify({'error': 'Start time must be in the future'}), 400
+        
+        overlapping = Booking.query.filter(
+            Booking.resource_name == booking.resource_name,
+            Booking.status.in_({'upcoming', 'ongoing'}),
+            Booking.id != booking_id,
+            Booking.start_time < new_end,
+            Booking.end_time > new_start
+        ).first()
+        
+        if overlapping:
+            return jsonify({'error': 'Resource is already booked for this time slot'}), 400
+        
+        booking.start_time = new_start
+        booking.end_time = new_end
+    
+    if 'purpose' in data:
+        booking.purpose = data['purpose']
+    
+    if 'status' in data:
+        valid_statuses = {'upcoming', 'ongoing', 'completed', 'cancelled'}
+        if data['status'] not in valid_statuses:
+            return jsonify({'error': f'Invalid status. Must be one of: {", ".join(valid_statuses)}'}), 400
+        booking.status = data['status']
+    
+    db.session.commit()
+    record_activity(get_jwt_identity(), 'Booking Updated', f"Updated booking for {booking.resource_name}")
+    notify_user(get_jwt_identity(), 'Booking Updated', f"Your booking for {booking.resource_name} has been updated.")
+    
+    return jsonify({'id': booking.id, 'status': booking.status})
+
+
+@app.delete('/api/bookings/<int:booking_id>')
+@jwt_required()
+def delete_booking(booking_id):
+    booking = Booking.query.get_or_404(booking_id)
+    
+    if booking.booked_by_user_id != get_jwt_identity():
+        return jsonify({'error': 'You can only cancel your own bookings'}), 400
+    
+    if booking.status in {'completed', 'cancelled'}:
+        return jsonify({'error': 'Cannot cancel completed or already cancelled bookings'}), 400
+    
+    booking.status = 'cancelled'
+    db.session.commit()
+    
+    record_activity(get_jwt_identity(), 'Booking Cancelled', f"Cancelled booking for {booking.resource_name}")
+    notify_user(get_jwt_identity(), 'Booking Cancelled', f"Your booking for {booking.resource_name} has been cancelled.")
+    
+    return jsonify({'ok': True})
 
 
 @app.get('/api/maintenance')
 @jwt_required()
 def maintenance():
-    data = MaintenanceRequest.query.all()
-    return jsonify([{'id': item.id, 'issue_description': item.issue_description, 'priority': item.priority, 'status': item.status} for item in data])
+    data = MaintenanceRequest.query.order_by(MaintenanceRequest.created_at.desc()).all()
+    return jsonify([
+        {
+            'id': item.id,
+            'asset_id': item.asset_id,
+            'issue_description': item.issue_description,
+            'priority': item.priority,
+            'status': item.status,
+            'requested_by_user_id': item.requested_by_user_id,
+            'assigned_technician_id': item.assigned_technician_id,
+            'created_at': item.created_at.isoformat() if item.created_at else None,
+            'completed_at': item.completed_at.isoformat() if item.completed_at else None,
+        } for item in data
+    ])
 
 
 @app.post('/api/maintenance')
 @jwt_required()
 def create_maintenance():
     data = request.get_json() or {}
+    try:
+        validate_required_fields(data, ['asset_id', 'issue_description'])
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+    
+    asset = Asset.query.get_or_404(data['asset_id'])
+    
+    existing_pending = MaintenanceRequest.query.filter_by(
+        asset_id=data['asset_id'],
+        status='pending'
+    ).first()
+    if existing_pending:
+        return jsonify({'error': 'Asset already has a pending maintenance request'}), 400
+    
     request_item = MaintenanceRequest(
         asset_id=data['asset_id'],
         requested_by_user_id=get_jwt_identity(),
         issue_description=data['issue_description'],
         priority=data.get('priority', 'medium'),
-        status=data.get('status', 'pending'),
+        status='pending',
     )
     db.session.add(request_item)
     db.session.commit()
-    record_activity(get_jwt_identity(), 'Maintenance Requested', f"Reported issue for asset {request_item.asset_id}")
-    notify_user(get_jwt_identity(), 'Maintenance Request Submitted', f"Maintenance request for asset {request_item.asset_id} is pending review.")
+    
+    record_activity(get_jwt_identity(), 'Maintenance Requested', f"Reported issue for asset {asset.name}")
+    notify_user(get_jwt_identity(), 'Maintenance Request Submitted', f"Maintenance request for asset {asset.name} is pending review.")
+    
     return jsonify({'id': request_item.id})
 
 
@@ -780,18 +938,82 @@ def create_maintenance():
 def update_maintenance(maintenance_id):
     data = request.get_json() or {}
     item = MaintenanceRequest.query.get_or_404(maintenance_id)
+    asset = Asset.query.get(item.asset_id)
+    
+    valid_statuses = {'pending', 'approved', 'rejected', 'in_progress', 'resolved'}
+    valid_transitions = {
+        'pending': {'approved', 'rejected'},
+        'approved': {'in_progress'},
+        'in_progress': {'resolved'},
+        'rejected': set(),
+        'resolved': set(),
+    }
+    
     if 'status' in data:
-        item.status = data['status']
+        if data['status'] not in valid_statuses:
+            return jsonify({'error': f'Invalid status. Must be one of: {", ".join(valid_statuses)}'}), 400
+        
+        if item.status != data['status']:
+            if data['status'] not in valid_transitions.get(item.status, set()):
+                return jsonify({'error': f'Invalid status transition from {item.status} to {data["status"]}'}), 400
+            
+            old_status = item.status
+            item.status = data['status']
+            
+            if data['status'] == 'approved':
+                item.approved_by_user_id = get_jwt_identity()
+                item.approved_at = datetime.utcnow()
+                if asset:
+                    asset.status = 'under_maintenance'
+                    history = AssetHistory(
+                        asset_id=asset.id,
+                        action='Under Maintenance',
+                        details=f"Asset placed under maintenance for: {item.issue_description}"
+                    )
+                    db.session.add(history)
+            
+            elif data['status'] == 'rejected':
+                item.rejected_by_user_id = get_jwt_identity()
+                item.rejected_at = datetime.utcnow()
+            
+            elif data['status'] == 'in_progress':
+                if 'assigned_technician_id' in data:
+                    if not Technician.query.get(data['assigned_technician_id']):
+                        return jsonify({'error': 'Technician not found'}), 400
+                    item.assigned_technician_id = data['assigned_technician_id']
+                item.started_at = datetime.utcnow()
+            
+            elif data['status'] == 'resolved':
+                item.completed_at = datetime.utcnow()
+                if asset:
+                    asset.status = 'available'
+                    history = AssetHistory(
+                        asset_id=asset.id,
+                        action='Maintenance Resolved',
+                        details=f"Maintenance completed for: {item.issue_description}"
+                    )
+                    db.session.add(history)
+    
     if 'priority' in data:
+        valid_priorities = {'low', 'medium', 'high'}
+        if data['priority'] not in valid_priorities:
+            return jsonify({'error': f'Invalid priority. Must be one of: {", ".join(valid_priorities)}'}), 400
         item.priority = data['priority']
+    
     if 'issue_description' in data:
         item.issue_description = data['issue_description']
-    if item.status == 'resolved':
-        item.completed_at = datetime.utcnow()
+    
+    if 'assigned_technician_id' in data and 'status' not in data:
+        if not Technician.query.get(data['assigned_technician_id']):
+            return jsonify({'error': 'Technician not found'}), 400
+        item.assigned_technician_id = data['assigned_technician_id']
+    
     db.session.commit()
-    record_activity(get_jwt_identity(), 'Maintenance Updated', f"Updated maintenance request {item.id}")
-    if item.status in {'approved', 'resolved'}:
+    record_activity(get_jwt_identity(), 'Maintenance Updated', f"Updated maintenance request {item.id} from {old_status if 'old_status' in locals() else item.status} to {item.status}")
+    
+    if item.status in {'approved', 'rejected', 'resolved'}:
         notify_user(item.requested_by_user_id, 'Maintenance Update', f"Maintenance request {item.id} is now {item.status}.")
+    
     return jsonify({'id': item.id, 'status': item.status})
 
 
@@ -799,6 +1021,7 @@ def update_maintenance(maintenance_id):
 @jwt_required()
 def notifications():
     enqueue_overdue_return_notifications()
+    process_booking_updates()
     data = Notification.query.filter_by(user_id=get_jwt_identity()).order_by(Notification.created_at.desc()).all()
     return jsonify([{'id': item.id, 'title': item.title, 'message': item.message, 'is_read': item.is_read, 'created_at': item.created_at.isoformat()} for item in data])
 
@@ -840,22 +1063,56 @@ def allocations():
 @jwt_required()
 def create_allocation():
     data = request.get_json() or {}
+    try:
+        validate_required_fields(data, ['asset_id', 'assigned_to_user_id'])
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+    
     asset = Asset.query.get_or_404(data['asset_id'])
+    if asset.status != 'available':
+        return jsonify({'error': 'Asset is not available for allocation'}), 400
+    
+    existing_allocation = AssetAllocation.query.filter_by(
+        asset_id=data['asset_id'],
+        status='assigned'
+    ).first()
+    if existing_allocation:
+        return jsonify({'error': 'Asset is already allocated'}), 400
+    
+    if not User.query.get(data['assigned_to_user_id']):
+        return jsonify({'error': 'User not found'}), 400
+    
+    expected_return_date = datetime.fromisoformat(data['expected_return_date']) if data.get('expected_return_date') else None
+    if expected_return_date and expected_return_date <= datetime.utcnow():
+        return jsonify({'error': 'Expected return date must be in the future'}), 400
+    
     allocation = AssetAllocation(
         asset_id=asset.id,
         assigned_to_user_id=data['assigned_to_user_id'],
         assigned_by_user_id=get_jwt_identity(),
-        expected_return_date=datetime.fromisoformat(data['expected_return_date']) if data.get('expected_return_date') else None,
-        status=data.get('status', 'assigned'),
+        expected_return_date=expected_return_date,
+        status='assigned',
     )
+    
     asset.status = 'assigned'
     asset.assigned_to_user_id = data['assigned_to_user_id']
+    
     db.session.add(allocation)
+    
+    history = AssetHistory(
+        asset_id=asset.id,
+        action='Allocated',
+        details=f"Allocated to user {data['assigned_to_user_id']} by {get_jwt_identity()}"
+    )
+    db.session.add(history)
+    
     db.session.commit()
     record_activity(get_jwt_identity(), 'Asset Allocated', f"Allocated {asset.name} to user {data['assigned_to_user_id']}")
     notify_user(data['assigned_to_user_id'], 'Asset Assigned', f"Asset {asset.name} has been assigned to you.")
-    if allocation.expected_return_date and allocation.expected_return_date < datetime.utcnow():
-        notify_user(data['assigned_to_user_id'], 'Return Overdue', f"Asset {asset.name} is already overdue for return.")
+    
+    if allocation.expected_return_date:
+        notify_user(data['assigned_to_user_id'], 'Return Date', f"Expected return date: {allocation.expected_return_date.strftime('%Y-%m-%d')}")
+    
     return jsonify({'id': allocation.id})
 
 
@@ -863,12 +1120,24 @@ def create_allocation():
 @jwt_required()
 def return_allocation(allocation_id):
     allocation = AssetAllocation.query.get_or_404(allocation_id)
+    if allocation.status != 'assigned':
+        return jsonify({'error': 'Allocation is not active'}), 400
+    
     allocation.returned_date = datetime.utcnow()
     allocation.status = 'returned'
+    
     asset = Asset.query.get(allocation.asset_id)
     if asset:
         asset.status = 'available'
         asset.assigned_to_user_id = None
+        
+        history = AssetHistory(
+            asset_id=asset.id,
+            action='Returned',
+            details=f"Returned by user {allocation.assigned_to_user_id}, processed by {get_jwt_identity()}"
+        )
+        db.session.add(history)
+    
     db.session.commit()
     record_activity(get_jwt_identity(), 'Asset Returned', f"Returned asset {asset.name if asset else allocation.asset_id}")
     notify_user(allocation.assigned_to_user_id, 'Asset Returned', f"Asset {asset.name if asset else allocation.asset_id} has been returned.")
@@ -900,8 +1169,24 @@ def create_transfer():
         validate_required_fields(data, ['asset_id', 'from_department_id', 'to_department_id'])
     except ValueError as exc:
         return jsonify({'error': str(exc)}), 400
+    
     if data['from_department_id'] == data['to_department_id']:
         return jsonify({'error': 'Transfer destination must differ from source department'}), 400
+    
+    asset = Asset.query.get_or_404(data['asset_id'])
+    if asset.department_id != data['from_department_id']:
+        return jsonify({'error': 'Asset is not in the source department'}), 400
+    
+    if not Department.query.get(data['to_department_id']):
+        return jsonify({'error': 'Destination department not found'}), 400
+    
+    existing_pending = TransferRequest.query.filter_by(
+        asset_id=data['asset_id'],
+        status='pending'
+    ).first()
+    if existing_pending:
+        return jsonify({'error': 'Asset already has a pending transfer request'}), 400
+    
     transfer = TransferRequest(
         asset_id=data['asset_id'],
         requested_by_user_id=get_jwt_identity(),
@@ -912,11 +1197,13 @@ def create_transfer():
     )
     db.session.add(transfer)
     db.session.commit()
-    asset = Asset.query.get(transfer.asset_id)
-    record_activity(get_jwt_identity(), 'Transfer Requested', f"Requested transfer for asset {transfer.asset_id}")
-    notify_user(get_jwt_identity(), 'Transfer Requested', f"Transfer requested for asset {asset.name if asset else transfer.asset_id}.")
-    if asset and asset.assigned_to_user_id:
+    
+    record_activity(get_jwt_identity(), 'Transfer Requested', f"Requested transfer for asset {asset.name}")
+    notify_user(get_jwt_identity(), 'Transfer Requested', f"Transfer requested for asset {asset.name}.")
+    
+    if asset.assigned_to_user_id:
         notify_user(asset.assigned_to_user_id, 'Transfer Requested', f"Asset {asset.name} is pending transfer to another department.")
+    
     return jsonify({'id': transfer.id})
 
 
@@ -926,14 +1213,69 @@ def approve_transfer(transfer_id):
     transfer = TransferRequest.query.get_or_404(transfer_id)
     if transfer.status != 'pending':
         return jsonify({'error': 'Transfer is not pending'}), 400
+    
+    current_user_id = get_jwt_identity()
+    current_user = User.query.get(current_user_id)
+    
+    if not current_user:
+        return jsonify({'error': 'User not found'}), 400
+    
+    is_manager = current_user.role and current_user.role.name in {'Asset Manager', 'Admin'}
+    is_dept_head = Employee.query.filter_by(user_id=current_user_id, department_id=transfer.from_department_id, is_department_head=True).first()
+    
+    if not (is_manager or is_dept_head):
+        return jsonify({'error': 'Only Asset Manager or Department Head can approve transfers'}), 400
+    
     transfer.status = 'approved'
+    transfer.approved_by_user_id = current_user_id
     transfer.approved_at = datetime.utcnow()
+    
     asset = Asset.query.get(transfer.asset_id)
     if asset:
+        old_department = asset.department_id
         asset.department_id = transfer.to_department_id
+        
+        history = AssetHistory(
+            asset_id=asset.id,
+            action='Transferred',
+            details=f"Transferred from department {old_department} to {transfer.to_department_id}, approved by {current_user.full_name}"
+        )
+        db.session.add(history)
+    
     db.session.commit()
-    record_activity(get_jwt_identity(), 'Transfer Approved', f"Approved transfer for asset {asset.name if asset else transfer.asset_id}")
+    record_activity(current_user_id, 'Transfer Approved', f"Approved transfer for asset {asset.name if asset else transfer.asset_id}")
     notify_user(transfer.requested_by_user_id, 'Transfer Approved', f"Transfer for asset {asset.name if asset else transfer.asset_id} was approved.")
+    
+    return jsonify({'ok': True})
+
+
+@app.post('/api/transfers/<int:transfer_id>/reject')
+@jwt_required()
+def reject_transfer(transfer_id):
+    transfer = TransferRequest.query.get_or_404(transfer_id)
+    if transfer.status != 'pending':
+        return jsonify({'error': 'Transfer is not pending'}), 400
+    
+    current_user_id = get_jwt_identity()
+    current_user = User.query.get(current_user_id)
+    
+    if not current_user:
+        return jsonify({'error': 'User not found'}), 400
+    
+    is_manager = current_user.role and current_user.role.name in {'Asset Manager', 'Admin'}
+    is_dept_head = Employee.query.filter_by(user_id=current_user_id, department_id=transfer.from_department_id, is_department_head=True).first()
+    
+    if not (is_manager or is_dept_head):
+        return jsonify({'error': 'Only Asset Manager or Department Head can reject transfers'}), 400
+    
+    transfer.status = 'rejected'
+    transfer.rejected_by_user_id = current_user_id
+    transfer.rejected_at = datetime.utcnow()
+    
+    db.session.commit()
+    record_activity(current_user_id, 'Transfer Rejected', f"Rejected transfer for asset {transfer.asset_id}")
+    notify_user(transfer.requested_by_user_id, 'Transfer Rejected', f"Transfer for asset {transfer.asset_id} was rejected.")
+    
     return jsonify({'ok': True})
 
 
